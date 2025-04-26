@@ -1,80 +1,32 @@
-# Qubic Reference Miner
-This Repo contains the reference implementation of the algoritm used in Qubic.
+# Sender (XMR-Stratum -> Qubic Network)
 
-# Requirement
-- CPU: support at least AVX2 instruction set
-- OS: Windows, Linux
+**Sender** is a custom-built solution based on **Qiner** that connects the XMR-Stratum  to the **Qubic Network**.  
+Its primary role is to receive mining solutions (shares) via TCP and relay them correctly within the Qubic environment by signing them with a valid Computor identity.
 
-# Build
-## Windows
-### Visual Studio 2022
-- Open Qiner.sln
-- Build
-### Other Visual Studio versions
+---
 
-- Support generation using CMake with below command
-```
-# Assume in Qiner folder
-mkdir build
-cd build
-"C:\Program Files\CMake\bin\cmake.exe" -G <Visual Studio Generator>
-# Example: C:\Program Files\CMake\bin\cmake.exe" -G "Visual Studio 17 2022"
-```
-- Open Qiner.sln in build folder and build
+## Features
 
-### Enable AVX512
-- Open Qiner.sln
-- Right click Qiner->[C/C++]->[Code Generation]->[Enable Enhanced Instruction Set] -> [...AVX512] -> OK
+-  **TCP Listener for XMR-Stratum**: Accepts Monero mining solutions via TCP connections.
+-  **Seed Signing & Validation**: Ensures that only authorized Computors relay solutions into the network.
+-  **Key Management**: Lightweight cryptographic functions for handling seeds, subseeds, public/private key generation, and identity verification.
 
-## Linux
-Currently support GCC and Clang
-- Installed required libraries
+---
 
-For example,
-- Ubuntu with GCC
-```
-sudo apt install build-essential
-```
-- Ubuntu with Clang
-```
-sudo apt install build-essential
-sudo apt install clang
-```
+## How It Works
 
+- Solutions are sent from an XMR-Stratum server via TCP.
+- The Sender authenticates these solutions by:
+  - Generating a **subseed** from the given Computor seed.
+  - Deriving a **private key** and **public key** from the subseed.
+  - Creating a **Computor Identity** from the public key.
 
-### GCC
-Run below command
-```
-mkdir build
-cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j8
-```
+---
 
-### Clang
-Run below command
-```
-mkdir build
-cd build
-CC=clang CXX=clang++ cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j8
-```
+## Dependencies
 
-### Enable AVX512
-To enable AVX512, -DENABLE_AVX512=1 need to be parse in the cmake command.
+- `keyUtils.h`
+- `K12AndKeyUtil.h`
+- Standard C++ libraries (`<cstdint>`, `<vector>`, etc.).
 
-Example,
-```
-# GCC
-cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_AVX512=1
-
-# Clang
-CC=clang CXX=clang++ cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_AVX512=1
-```
-
-# Run
-```
-Qiner <IP> <Identity> [<number of threads>]
-```
-- number of threads:  Optional, if not parse default number of cores will be used
 
