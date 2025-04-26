@@ -431,7 +431,7 @@ void listenerThread(char* nodeIp)
                     byteToHex(tk->m_seed, hexSeed, 32);
 
                     // Updated target value 
-                    char hexTarget[17] = "000022f3027f0d78";
+                    char hexTarget[17] = "780D7F02F3220000";
 
                     // Format the JSON
                     char jsonOutput[2048];
