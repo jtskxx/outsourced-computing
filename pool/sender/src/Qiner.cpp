@@ -410,7 +410,7 @@ public:
             int received = ::recv(socket, buffer, sizeof(buffer) - 1, 0);
 
             if (received <= 0) {
-                break;  
+                break;
             }
 
             // Null-terminate and append to result
@@ -603,10 +603,22 @@ bool processSolution(const std::string& jsonLine,
         // Set task index from task_id
         solution.taskIndex = std::stoull(task_id);
 
-        // Set solution nonce (hex string to integer)
-        solution.nonce = std::stoul(nonce, nullptr, 16);
+        // FIX: Handle byte order for nonce conversion
+        // First convert hex string to unsigned long
+        unsigned long nonce_long = std::stoul(nonce, nullptr, 16);
+
+        // Then cast to unsigned int (ensuring no data loss)
+        unsigned int nonce_host = static_cast<unsigned int>(nonce_long);
+
+        // Convert from host byte order to network byte order
+        unsigned int nonce_network = htonl(nonce_host);
+
+        // Assign network byte ordered value to solution structure
+        solution.nonce = nonce_network;
+
+        // Log simplified output
         std::cout << "Solution #" << solutionCount << " - Task: " << solution.taskIndex
-            << ", Nonce: 0x" << std::hex << solution.nonce << std::dec << std::endl;
+            << ", Nonce: 0x" << std::hex << nonce_host << std::dec << std::endl;
 
         // Set padding field to zero (reserved for future use)
         solution.padding = 0;
