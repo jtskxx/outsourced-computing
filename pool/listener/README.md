@@ -22,3 +22,6 @@ make
 ## Info
 - Broadcasts mining tasks over TCP port `8765`.
 - Cross-platform (Linux/Windows).
+
+
+![image](https://github.com/user-attachments/assets/12a8a640-64e9-412a-bf75-293338df01ef)
