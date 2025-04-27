@@ -714,7 +714,7 @@ bool processSolution(const std::string& jsonLine,
 int main(int argc, char* argv[]) {
     // Validate command-line arguments
     if (argc < 3) {
-        std::cerr << "Usage: Sender <Node IP> <Node Port> [Target Public Key]" << std::endl;
+        std::cerr << "Usage: Sender <Node IP> <Node Port>" << std::endl;
         return EXIT_FAILURE;
     }
 
