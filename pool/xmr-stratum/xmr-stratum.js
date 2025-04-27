@@ -1,6 +1,7 @@
 const net = require('net');
 const http = require('http');
 const fs = require('fs');
+const https = require('https');
 
 // Edit these values as needed
 const CONFIG = {
@@ -10,6 +11,9 @@ const CONFIG = {
   minerPort: 3333,
   shareDistributionPort: 8766,
   statsPort: 8088,
+  
+  // Admin authentication
+  adminPassword: 'yourSecurePassword', // Change this to your preferred password
   
   // Stat files
   statsPath: './stats.json',
@@ -30,9 +34,13 @@ const CONFIG = {
   resetMinute: 0,
   
   // Qubic-specific settings
-  defaultComputorIndex: 0,
+  computorSettingsPath: './computor_settings.json',
+  computorIndexesPath: './computor_indexes.json',
   nonceRangeSize: 155480000, // Size for a 7950X CPU
-  computorSettingsPath: './computor_settings.json'
+  
+  // New settings for multi-computor
+  defaultEpoch: 158,
+  rpcEndpoint: 'rpc.qubic.org'
 };
 
 // Global state
@@ -42,8 +50,32 @@ let totalShares = 0;
 let lastShareReset = null;
 let currentJob = null;
 let lastJobId = null;
-let currentComputorIndex = CONFIG.defaultComputorIndex;
 let nextNonceStartValue = 0;
+
+// New multi-computor state
+let computorDistribution = []; // Array of {index, weight, identity}
+let computorIdentities = []; // Array of identities from the API
+let currentEpoch = CONFIG.defaultEpoch;
+
+function getNextComputorIndex() {
+  if (computorDistribution.length === 0) {
+    return 0; // Default if no distribution defined
+  }
+  
+  // Use weighted random selection
+  const totalWeight = computorDistribution.reduce((sum, item) => sum + item.weight, 0);
+  let random = Math.random() * totalWeight;
+  
+  for (const item of computorDistribution) {
+    random -= item.weight;
+    if (random <= 0) {
+      return item.index;
+    }
+  }
+  
+  // Fallback to first item
+  return computorDistribution[0].index;
+}
 
 function initializeNonce() {
   nextNonceStartValue = Math.floor(Math.random() * 2147483648);
@@ -52,34 +84,39 @@ function initializeNonce() {
 
 function loadComputorSettings() {
   try {
-    if (fs.existsSync(CONFIG.computorSettingsPath)) {
-      const data = fs.readFileSync(CONFIG.computorSettingsPath, 'utf8');
-      const settings = JSON.parse(data);
-      
-      if (typeof settings.computorIndex === 'number') {
-        currentComputorIndex = settings.computorIndex;
-        console.log(`[SETTINGS] Loaded computor index: ${currentComputorIndex}`);
-      }
+    // Load computor distribution
+    if (fs.existsSync(CONFIG.computorIndexesPath)) {
+      const data = fs.readFileSync(CONFIG.computorIndexesPath, 'utf8');
+      computorDistribution = JSON.parse(data);
+      console.log(`[SETTINGS] Loaded computor distribution with ${computorDistribution.length} entries`);
     } else {
-      console.log(`[SETTINGS] No settings file found, using default index: ${currentComputorIndex}`);
+      // Initialize with default
+      computorDistribution = [{
+        index: 0,
+        weight: 100,
+        identity: null
+      }];
+      console.log(`[SETTINGS] No distribution file found, using default index: 0 with 100% weight`);
+      saveComputorDistribution();
     }
   } catch (error) {
     console.error('[SETTINGS] Error loading settings:', error);
-    console.log(`[SETTINGS] Using default index: ${currentComputorIndex}`);
+    // Initialize with default
+    computorDistribution = [{
+      index: 0,
+      weight: 100,
+      identity: null
+    }];
+    console.log(`[SETTINGS] Using default distribution due to error`);
   }
 }
 
-function saveComputorSettings() {
-  const settings = {
-    computorIndex: currentComputorIndex,
-    savedAt: new Date().toISOString()
-  };
-  
-  fs.writeFile(CONFIG.computorSettingsPath, JSON.stringify(settings, null, 2), (err) => {
+function saveComputorDistribution() {
+  fs.writeFile(CONFIG.computorIndexesPath, JSON.stringify(computorDistribution, null, 2), (err) => {
     if (err) {
-      console.error('[SETTINGS] Error saving settings:', err);
+      console.error('[SETTINGS] Error saving computor distribution:', err);
     } else if (CONFIG.verbose) {
-      console.log(`[SETTINGS] Settings saved`);
+      console.log(`[SETTINGS] Computor distribution saved`);
     }
   });
 }
@@ -213,6 +250,56 @@ function sendKeepaliveToMiners() {
   });
 }
 
+// Function to fetch computor list from API
+function fetchComputorList(epoch, callback) {
+  const url = `https://${CONFIG.rpcEndpoint}/v1/epochs/${epoch}/computors`;
+  
+  https.get(url, (res) => {
+    let data = '';
+    
+    res.on('data', (chunk) => {
+      data += chunk;
+    });
+    
+    res.on('end', () => {
+      try {
+        const result = JSON.parse(data);
+        if (result && result.computors && Array.isArray(result.computors.identities)) {
+          computorIdentities = result.computors.identities;
+          currentEpoch = epoch;
+          console.log(`[API] Loaded ${computorIdentities.length} computor identities for epoch ${epoch}`);
+          
+          // Update existing distribution with identity information
+          computorDistribution = computorDistribution.map(item => {
+            if (item.index >= 0 && item.index < computorIdentities.length) {
+              item.identity = computorIdentities[item.index];
+            }
+            return item;
+          });
+          
+          saveComputorDistribution();
+          callback(null, computorIdentities);
+        } else {
+          callback(new Error('Invalid API response format'), null);
+        }
+      } catch (error) {
+        callback(new Error(`Error parsing API response: ${error.message}`), null);
+      }
+    });
+  }).on('error', (err) => {
+    callback(new Error(`API request failed: ${err.message}`), null);
+  });
+}
+
+// Function to find index of a computor identity
+function findComputorIndex(identity) {
+  if (!computorIdentities.length) {
+    return -1;
+  }
+  
+  return computorIdentities.findIndex(id => id === identity);
+}
+
 function connectToTaskSource() {
   const taskClient = new net.Socket();
   
@@ -282,7 +369,8 @@ function connectToTaskSource() {
           lastJobId = currentJob.job.job_id;
           initializeNonce();
           
-          currentJob.job.computorIndex = currentComputorIndex;
+          // Select computor index based on distribution
+          currentJob.job.computorIndex = getNextComputorIndex();
           
           console.log(`[QUBIC] Using computor index: ${currentJob.job.computorIndex} for job ${currentJob.job.job_id}`);
           
@@ -434,6 +522,9 @@ const minerServer = net.createServer((socket) => {
             }
             
             if (currentJob) {
+              // Get a fresh computor index for this login
+              const computorIndex = getNextComputorIndex();
+              
               const loginResponse = {
                 id: message.id,
                 jsonrpc: "2.0",
@@ -449,7 +540,7 @@ const minerServer = net.createServer((socket) => {
                     seed_hash: currentJob.job.seed_hash,
                     height: currentJob.job.height,
                     algo: currentJob.job.algo || "rx/0",
-                    computorIndex: currentComputorIndex,
+                    computorIndex: computorIndex,
                     start_nonce: minerInfo.nonceRange.start_nonce,
                     end_nonce: minerInfo.nonceRange.end_nonce
                   }
@@ -457,7 +548,7 @@ const minerServer = net.createServer((socket) => {
               };
               
               if (CONFIG.verbose) {
-                console.log(`[MINER] Login response: ${JSON.stringify(loginResponse)}`);
+                console.log(`[MINER] Login response with computor index ${computorIndex}: ${JSON.stringify(loginResponse)}`);
               }
               
               socket.write(JSON.stringify(loginResponse) + '\n');
@@ -500,6 +591,9 @@ const minerServer = net.createServer((socket) => {
             minerInfo.nonceRange = allocateNonceRange();
             miners.set(minerId, minerInfo);
             
+            // Get a fresh computor index for this job request
+            const computorIndex = getNextComputorIndex();
+            
             const jobResponse = {
               id: message.id,
               jsonrpc: "2.0",
@@ -512,7 +606,7 @@ const minerServer = net.createServer((socket) => {
                 seed_hash: currentJob.job.seed_hash,
                 height: currentJob.job.height,
                 algo: currentJob.job.algo || "rx/0",
-                computorIndex: currentComputorIndex,
+                computorIndex: computorIndex,
                 start_nonce: minerInfo.nonceRange.start_nonce,
                 end_nonce: minerInfo.nonceRange.end_nonce
               }
@@ -521,7 +615,7 @@ const minerServer = net.createServer((socket) => {
             socket.write(JSON.stringify(jobResponse) + '\n');
             
             if (CONFIG.verbose) {
-              console.log(`[MINER] Sent job to ${minerId}, nonce: ${minerInfo.nonceRange.start_nonce} - ${minerInfo.nonceRange.end_nonce}`);
+              console.log(`[MINER] Sent job to ${minerId} with computor index ${computorIndex}, nonce: ${minerInfo.nonceRange.start_nonce} - ${minerInfo.nonceRange.end_nonce}`);
             }
           } else {
             const emptyJobResponse = {
@@ -572,6 +666,9 @@ const minerServer = net.createServer((socket) => {
             socket.write(JSON.stringify(shareResponse) + '\n');
             console.log(`[SHARE] Accepted from miner ${minerId}`);
             
+            // Get computor index for this share
+            const computorIndex = message.params.computorIndex || getNextComputorIndex();
+            
             const simplifiedShareMessage = {
               params: {
                 nonce: message.params.nonce,
@@ -579,7 +676,7 @@ const minerServer = net.createServer((socket) => {
               },
               task_id: currentJob ? currentJob.id : null,
               task_seed_hash: currentJob && currentJob.job ? currentJob.job.seed_hash : null,
-              computorIndex: currentComputorIndex
+              computorIndex: computorIndex
             };
             
             distributeShare(simplifiedShareMessage);
@@ -717,6 +814,9 @@ function broadcastToMiners() {
       minerInfo.nonceRange = allocateNonceRange();
       miners.set(minerId, minerInfo);
       
+      // Get a fresh computor index for broadcast
+      const computorIndex = getNextComputorIndex();
+      
       const minerJob = {
         jsonrpc: "2.0",
         method: "job",
@@ -728,7 +828,7 @@ function broadcastToMiners() {
           seed_hash: currentJob.job.seed_hash,
           height: currentJob.job.height,
           algo: currentJob.job.algo || "rx/0",
-          computorIndex: currentComputorIndex,
+          computorIndex: computorIndex,
           start_nonce: minerInfo.nonceRange.start_nonce,
           end_nonce: minerInfo.nonceRange.end_nonce
         }
@@ -738,12 +838,12 @@ function broadcastToMiners() {
       activeMiners++;
       
       if (CONFIG.verbose) {
-        console.log(`[JOB] Sent to miner ${minerId}, nonce: ${minerInfo.nonceRange.start_nonce} - ${minerInfo.nonceRange.end_nonce}`);
+        console.log(`[JOB] Sent to miner ${minerId} with computor index ${computorIndex}, nonce: ${minerInfo.nonceRange.start_nonce} - ${minerInfo.nonceRange.end_nonce}`);
       }
     }
   });
   
-  console.log(`[JOB] Sent to ${activeMiners} miners (Computor: ${currentComputorIndex})`);
+  console.log(`[JOB] Sent to ${activeMiners} miners`);
 }
 
 function formatHashrate(hashrate) {
@@ -761,7 +861,8 @@ function generateStats() {
   const stats = {
     totalShares,
     lastShareReset,
-    currentComputorIndex,
+    computorDistribution,
+    currentEpoch,
     minerCount: {
       total: miners.size,
       active: Array.from(miners.values()).filter(m => m.connected).length
@@ -810,7 +911,7 @@ function saveStatsToFile() {
   });
 }
 
-function generateComputorSettingsHTML() {
+function generateEnhancedHTML() {
   return `
 <!DOCTYPE html>
 <html lang="en">
@@ -823,12 +924,12 @@ function generateComputorSettingsHTML() {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       line-height: 1.6;
       color: #333;
-      max-width: 800px;
+      max-width: 1000px;
       margin: 0 auto;
       padding: 20px;
       background: #f7f7f7;
     }
-    h1, h2 {
+    h1, h2, h3 {
       color: #2c3e50;
     }
     .card {
@@ -843,7 +944,7 @@ function generateComputorSettingsHTML() {
       margin-bottom: 5px;
       font-weight: bold;
     }
-    input[type="number"] {
+    input[type="number"], input[type="text"], textarea, select {
       width: 100%;
       padding: 8px;
       margin-bottom: 10px;
@@ -859,6 +960,8 @@ function generateComputorSettingsHTML() {
       border-radius: 4px;
       cursor: pointer;
       font-size: 16px;
+      margin-right: 5px;
+      margin-bottom: 5px;
     }
     button:hover {
       background-color: #2980b9;
@@ -867,6 +970,18 @@ function generateComputorSettingsHTML() {
       background-color: #e7f5fe;
       padding: 15px;
       border-left: 4px solid #3498db;
+      margin-bottom: 20px;
+    }
+    .warning {
+      background-color: #fff8e1;
+      padding: 15px;
+      border-left: 4px solid #ffa000;
+      margin-bottom: 20px;
+    }
+    .error {
+      background-color: #fdecea;
+      padding: 15px;
+      border-left: 4px solid #e53935;
       margin-bottom: 20px;
     }
     .stats {
@@ -889,71 +1004,216 @@ function generateComputorSettingsHTML() {
       color: #7f8c8d;
       font-size: 14px;
     }
+    .computor-item {
+      display: flex;
+      align-items: center;
+      background: #f5f5f5;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+    .computor-index {
+      width: 80px;
+      font-weight: bold;
+    }
+    .computor-weight {
+      width: 150px;
+      display: flex;
+      align-items: center;
+    }
+    .weight-input {
+      width: 50px;
+      margin-right: 5px;
+      padding: 5px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    .save-btn {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .computor-identity {
+      flex-grow: 1;
+      font-family: monospace;
+      word-break: break-all;
+      font-size: 14px;
+      color: #666;
+    }
+    .computor-action {
+      margin-left: 10px;
+    }
+    .computor-list {
+      max-height: 400px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 10px;
+      margin-top: 10px;
+    }
+    .tab {
+      overflow: hidden;
+      border: 1px solid #ccc;
+      background-color: #f1f1f1;
+      border-radius: 4px 4px 0 0;
+    }
+    .tab button {
+      background-color: inherit;
+      color: #333;
+      float: left;
+      border: none;
+      outline: none;
+      cursor: pointer;
+      padding: 14px 16px;
+      transition: 0.3s;
+      font-size: 16px;
+      border-radius: 0;
+      margin: 0;
+    }
+    .tab button:hover {
+      background-color: #ddd;
+    }
+    .tab button.active {
+      background-color: #3498db;
+      color: white;
+    }
+    .tabcontent {
+      display: none;
+      padding: 20px;
+      border: 1px solid #ccc;
+      border-top: none;
+      border-radius: 0 0 4px 4px;
+    }
   </style>
 </head>
 <body>
   <h1>QUBIC <--> XMR Proxy Settings</h1>
   
-  <div class="info">
-    This interface allows you to configure which Qubic computor index to mine for. 
-    Changes will apply to all new jobs received.
+  <div class="tab">
+    <button class="tablinks active" onclick="openTab(event, 'ComputorTab')">Computor Management</button>
+    <button class="tablinks" onclick="openTab(event, 'StatsTab')">Mining Stats</button>
+    <button class="tablinks" onclick="openTab(event, 'APITab')">Computor API</button>
   </div>
   
-  <div class="card">
-    <h2>Computor Index Configuration</h2>
-    <label for="computorIndex">Computor Index:</label>
-    <input type="number" id="computorIndex" value="${currentComputorIndex}" min="0" max="676">
-    <button onclick="updateComputorIndex()">Update</button>
-    <p id="result"></p>
+  <div id="ComputorTab" class="tabcontent" style="display: block;">
+    <div class="info">
+      Manage multiple computor indices with weighted distribution. The proxy will assign computor indices based on these weights.
+    </div>
+    
+    <div class="card">
+      <h2>Computor Distribution</h2>
+      <div id="computorDistribution"></div>
+      
+      <h3>Add New Computor</h3>
+      <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+        <div style="flex: 1;">
+          <label for="newComputorIndex">Index (0-675):</label>
+          <input type="number" id="newComputorIndex" min="0" max="675">
+        </div>
+        <div style="flex: 1;">
+          <label for="newComputorWeight">Weight (%):</label>
+          <input type="number" id="newComputorWeight" min="1" max="100" value="10">
+        </div>
+      </div>
+      <button onclick="addComputor()">Add Computor</button>
+      <div id="computorResult"></div>
+    </div>
+    
+    <div class="card">
+      <h2>Batch Add by Identity</h2>
+      <div class="info">
+        Paste Qubic identity strings, one per line. Each identity will be converted to its index number.
+      </div>
+      <textarea id="identityBatch" rows="5" placeholder="Paste Qubic identity strings here, one per line..."></textarea>
+      <div style="margin-bottom: 10px;">
+        <label for="batchWeight">Weight for each (%):</label>
+        <input type="number" id="batchWeight" min="1" max="100" value="10">
+      </div>
+      <button onclick="addIdentityBatch()">Add Identities</button>
+      <div id="batchResult"></div>
+    </div>
   </div>
   
-  <div class="card">
-    <h2>Mining Statistics</h2>
-    <div class="stats">
-      <div class="stat-box">
-        <div class="stat-value" id="totalShares">-</div>
-        <div class="stat-label">Total Shares</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-value" id="activeMiners">-</div>
-        <div class="stat-label">Active Miners</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-value" id="totalHashrate">-</div>
-        <div class="stat-label">Total Hashrate</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-value" id="uptime">-</div>
-        <div class="stat-label">Uptime</div>
+  <div id="StatsTab" class="tabcontent">
+    <div class="card">
+      <h2>Mining Statistics</h2>
+      <div class="stats">
+        <div class="stat-box">
+          <div class="stat-value" id="totalShares">-</div>
+          <div class="stat-label">Total Shares</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="activeMiners">-</div>
+          <div class="stat-label">Active Miners</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="totalHashrate">-</div>
+          <div class="stat-label">Total Hashrate</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="uptime">-</div>
+          <div class="stat-label">Uptime</div>
+        </div>
       </div>
     </div>
   </div>
   
+  <div id="APITab" class="tabcontent">
+    <div class="card">
+      <h2>Computor API</h2>
+      <div class="info">
+        Fetch the computor list from the Qubic API for a specific epoch. This will update the available identities.
+      </div>
+      
+      <div style="display: flex; gap: 10px; align-items: flex-end; margin-bottom: 10px;">
+        <div style="flex: 1;">
+          <label for="epochNumber">Epoch Number:</label>
+          <input type="number" id="epochNumber" min="1" value="${currentEpoch}">
+        </div>
+        <button onclick="fetchComputorList()">Get Computor List</button>
+      </div>
+      
+      <div id="apiResult"></div>
+      
+      <h3>Computor List</h3>
+      <div class="info">Current Epoch: <span id="currentEpoch">${currentEpoch}</span></div>
+      <div id="computorList" class="computor-list">
+        <div id="computorListContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <a href="https://github.com/jtskxx/Jetski-Qubic-Pool" target="_blank">jetskipool.ai</a>
+  </div>
+  
   <script>
-    // Update computor index
-    function updateComputorIndex() {
-      const computorIndex = parseInt(document.getElementById('computorIndex').value);
-      
-      if (isNaN(computorIndex) || computorIndex < 0 || computorIndex > 676) {
-        document.getElementById('result').textContent = 'Invalid computor index! Must be between 0 and 676.';
-        return;
+    // Tab functionality
+    function openTab(evt, tabName) {
+      var i, tabcontent, tablinks;
+      tabcontent = document.getElementsByClassName("tabcontent");
+      for (i = 0; i < tabcontent.length; i++) {
+        tabcontent[i].style.display = "none";
       }
+      tablinks = document.getElementsByClassName("tablinks");
+      for (i = 0; i < tablinks.length; i++) {
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+      }
+      document.getElementById(tabName).style.display = "block";
+      evt.currentTarget.className += " active";
       
-      fetch('/update-computor-index', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ computorIndex }),
-      })
-      .then(response => response.json())
-      .then(data => {
-        document.getElementById('result').textContent = data.message;
+      // Refresh data when tab is opened
+      if (tabName === 'StatsTab') {
         loadStats();
-      })
-      .catch(error => {
-        document.getElementById('result').textContent = 'Error: ' + error.message;
-      });
+      } else if (tabName === 'ComputorTab') {
+        loadComputorDistribution();
+      } else if (tabName === 'APITab') {
+        loadComputorList();
+      }
     }
     
     // Format time duration (seconds to days, hours, minutes, seconds)
@@ -983,16 +1243,309 @@ function generateComputorSettingsHTML() {
           document.getElementById('activeMiners').textContent = data.minerCount.active;
           document.getElementById('totalHashrate').textContent = data.totalHashrateFormatted;
           document.getElementById('uptime').textContent = formatDuration(data.uptime);
-          
-          document.getElementById('computorIndex').value = data.currentComputorIndex;
         })
         .catch(error => {
           console.error('Error loading stats:', error);
         });
     }
     
-    // Load stats on page load and every 10 seconds
+    // Load computor distribution with simplified weight editor
+    function loadComputorDistribution() {
+      fetch('/stats')
+        .then(response => response.json())
+        .then(data => {
+          const distributionDiv = document.getElementById('computorDistribution');
+          
+          if (data.computorDistribution && data.computorDistribution.length > 0) {
+            let html = '';
+            data.computorDistribution.forEach((item, i) => {
+              html += \`
+                <div class="computor-item" id="computor-\${i}">
+                  <div class="computor-index">Index: \${item.index}</div>
+                  <div class="computor-identity">\${item.identity || 'Unknown Identity'}</div>
+                  <div class="computor-weight">
+                    <input type="number" id="weight-\${i}" class="weight-input" min="1" max="100" value="\${item.weight}">
+                    <span>%</span>
+                    <button class="save-btn" onclick="saveWeight(\${i})">Save</button>
+                  </div>
+                  <div class="computor-action">
+                    <button onclick="removeComputor(\${i})">Remove</button>
+                  </div>
+                </div>
+              \`;
+            });
+            
+            distributionDiv.innerHTML = html;
+          } else {
+            distributionDiv.innerHTML = '<div class="info">No computor distribution configured</div>';
+          }
+        })
+        .catch(error => {
+          console.error('Error loading computor distribution:', error);
+        });
+    }
+    
+    // Save weight function (simplified)
+    function saveWeight(index) {
+      const weight = parseInt(document.getElementById(\`weight-\${index}\`).value);
+      
+      if (isNaN(weight) || weight < 1 || weight > 100) {
+        alert('Weight must be between 1 and 100');
+        return;
+      }
+      
+      fetch('/update-computor-weight', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index, weight }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          alert(data.message);
+        } else {
+          alert('Error: ' + data.message);
+        }
+      })
+      .catch(error => {
+        alert('Error: ' + error.message);
+      });
+    }
+    
+    // Load computor list
+    function loadComputorList() {
+      fetch('/stats')
+        .then(response => response.json())
+        .then(data => {
+          document.getElementById('currentEpoch').textContent = data.currentEpoch || 'Unknown';
+          
+          fetch('/computor-list')
+            .then(response => response.json())
+            .then(listData => {
+              const listDiv = document.getElementById('computorListContent');
+              
+              if (listData && listData.length > 0) {
+                let html = '';
+                listData.forEach((identity, index) => {
+                  html += \`
+                    <div style="margin-bottom: 5px; display: flex; align-items: center;">
+                      <span style="font-weight: bold; min-width: 60px;">\${index}:</span>
+                      <span style="font-family: monospace; word-break: break-all; flex-grow: 1;">\${identity}</span>
+                      <button onclick="addIdentityFromList(\${index}, '\${identity}')" style="margin-left: 10px;">Add</button>
+                    </div>
+                  \`;
+                });
+                
+                listDiv.innerHTML = html;
+              } else {
+                listDiv.innerHTML = '<div class="info">No computor list available. Use "Get Computor List" to fetch the list.</div>';
+              }
+            })
+            .catch(error => {
+              console.error('Error loading computor list:', error);
+              document.getElementById('computorListContent').innerHTML = 
+                '<div class="error">Error loading computor list. Use "Get Computor List" to fetch the list.</div>';
+            });
+        })
+        .catch(error => {
+          console.error('Error loading stats:', error);
+        });
+    }
+    
+    // Add computor
+    function addComputor() {
+      const index = parseInt(document.getElementById('newComputorIndex').value);
+      const weight = parseInt(document.getElementById('newComputorWeight').value);
+      
+      if (isNaN(index) || index < 0 || index > 675) {
+        document.getElementById('computorResult').innerHTML = 
+          '<div class="error">Invalid computor index! Must be between 0 and 675.</div>';
+        return;
+      }
+      
+      if (isNaN(weight) || weight < 1 || weight > 100) {
+        document.getElementById('computorResult').innerHTML = 
+          '<div class="error">Invalid weight! Must be between 1 and 100.</div>';
+        return;
+      }
+      
+      fetch('/add-computor', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index, weight }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('computorResult').innerHTML = 
+            \`<div class="info">\${data.message}</div>\`;
+          
+          // Clear inputs
+          document.getElementById('newComputorIndex').value = '';
+          
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          document.getElementById('computorResult').innerHTML = 
+            \`<div class="error">\${data.message}</div>\`;
+        }
+      })
+      .catch(error => {
+        document.getElementById('computorResult').innerHTML = 
+          \`<div class="error">Error: \${error.message}</div>\`;
+      });
+    }
+    
+    // Remove computor
+    function removeComputor(index) {
+      fetch('/remove-computor', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          alert("Error removing computor: " + data.message);
+        }
+      })
+      .catch(error => {
+        alert("Error: " + error.message);
+      });
+    }
+    
+    // Add identity from list
+    function addIdentityFromList(index, identity) {
+      const weight = 10; // Default weight
+      
+      fetch('/add-computor', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index, weight, identity }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          alert("Added computor " + index + " with weight " + weight + "%");
+          
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          alert("Error adding computor: " + data.message);
+        }
+      })
+      .catch(error => {
+        alert("Error: " + error.message);
+      });
+    }
+    
+    // Add identity batch
+    function addIdentityBatch() {
+      const identities = document.getElementById('identityBatch').value.trim().split('\\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
+      
+      const weight = parseInt(document.getElementById('batchWeight').value);
+      
+      if (identities.length === 0) {
+        document.getElementById('batchResult').innerHTML = 
+          '<div class="error">Please enter at least one identity.</div>';
+        return;
+      }
+      
+      if (isNaN(weight) || weight < 1 || weight > 100) {
+        document.getElementById('batchResult').innerHTML = 
+          '<div class="error">Invalid weight! Must be between 1 and 100.</div>';
+        return;
+      }
+      
+      fetch('/add-identity-batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ identities, weight }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('batchResult').innerHTML = 
+            \`<div class="info">\${data.message}</div>\`;
+          
+          // Clear textarea
+          document.getElementById('identityBatch').value = '';
+          
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          document.getElementById('batchResult').innerHTML = 
+            \`<div class="error">\${data.message}</div>\`;
+        }
+      })
+      .catch(error => {
+        document.getElementById('batchResult').innerHTML = 
+          \`<div class="error">Error: \${error.message}</div>\`;
+      });
+    }
+    
+    // Fetch computor list
+    function fetchComputorList() {
+      const epoch = parseInt(document.getElementById('epochNumber').value);
+      
+      if (isNaN(epoch) || epoch < 1) {
+        document.getElementById('apiResult').innerHTML = 
+          '<div class="error">Invalid epoch number!</div>';
+        return;
+      }
+      
+      document.getElementById('apiResult').innerHTML = 
+        '<div class="info">Fetching computor list for epoch ' + epoch + '...</div>';
+      
+      fetch('/fetch-computor-list', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ epoch }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('apiResult').innerHTML = 
+            \`<div class="info">\${data.message}</div>\`;
+          
+          // Update current epoch display
+          document.getElementById('currentEpoch').textContent = epoch;
+          
+          // Reload computor list
+          loadComputorList();
+        } else {
+          document.getElementById('apiResult').innerHTML = 
+            \`<div class="error">\${data.message}</div>\`;
+        }
+      })
+      .catch(error => {
+        document.getElementById('apiResult').innerHTML = 
+          \`<div class="error">Error: \${error.message}</div>\`;
+      });
+    }
+    
+    // Load initial data
     loadStats();
+    loadComputorDistribution();
+    
+    // Refresh data periodically
     setInterval(loadStats, 10000);
   </script>
 </body>
@@ -1001,17 +1554,57 @@ function generateComputorSettingsHTML() {
 }
 
 const statsServer = http.createServer((req, res) => {
-  if (req.url === '/stats' || req.url === '/api/stats') {
-    const stats = generateStats();
+  // Enable CORS for all requests
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  
+  // Handle OPTIONS preflight requests
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+  
+  // Add basic authentication for admin routes
+  if (req.url.startsWith('/admin/')) {
+    const authHeader = req.headers.authorization || '';
     
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(stats, null, 2));
-    
-    if (CONFIG.verbose) {
-      console.log(`[STATS] Served to ${req.socket.remoteAddress}`);
+    if (!authHeader.startsWith('Basic ')) {
+      res.writeHead(401, { 
+        'Content-Type': 'text/plain',
+        'WWW-Authenticate': 'Basic realm="Admin Access"'
+      });
+      res.end('Authentication required');
+      return;
     }
-  } 
-  else if (req.url === '/update-computor-index' && req.method === 'POST') {
+    
+    const base64Credentials = authHeader.split(' ')[1];
+    const credentials = Buffer.from(base64Credentials, 'base64').toString('utf8');
+    const [username, password] = credentials.split(':');
+    
+    if (password !== CONFIG.adminPassword) {
+      res.writeHead(401, { 
+        'Content-Type': 'text/plain',
+        'WWW-Authenticate': 'Basic realm="Admin Access"'
+      });
+      res.end('Invalid credentials');
+      return;
+    }
+    
+    // Rewrite admin URLs to remove the /admin prefix for processing
+    req.url = req.url.replace('/admin', '');
+  }
+  
+  // Redirect root to admin interface
+  if (req.url === '/') {
+    res.writeHead(302, { 'Location': '/admin/computors' });
+    res.end();
+    return;
+  }
+  
+  // Add endpoint to update computor weight
+  if (req.url === '/update-computor-weight' && req.method === 'POST') {
     let body = '';
     
     req.on('data', chunk => {
@@ -1021,30 +1614,29 @@ const statsServer = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const data = JSON.parse(body);
-        const newComputorIndex = parseInt(data.computorIndex);
+        const index = parseInt(data.index);
+        const weight = parseInt(data.weight);
         
-        if (isNaN(newComputorIndex) || newComputorIndex < 0 || newComputorIndex > 676) {
+        if (isNaN(index) || index < 0 || index >= computorDistribution.length) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, message: 'Invalid computor index' }));
+          res.end(JSON.stringify({ success: false, message: 'Invalid index' }));
           return;
         }
         
-        const oldIndex = currentComputorIndex;
-        currentComputorIndex = newComputorIndex;
-        
-        saveComputorSettings();
-        
-        console.log(`[SETTINGS] Computor index changed from ${oldIndex} to ${currentComputorIndex}`);
-        
-        if (currentJob) {
-          currentJob.job.computorIndex = currentComputorIndex;
-          broadcastToMiners();
+        if (isNaN(weight) || weight < 1 || weight > 100) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'Invalid weight' }));
+          return;
         }
+        
+        // Update computor weight
+        computorDistribution[index].weight = weight;
+        saveComputorDistribution();
         
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ 
           success: true, 
-          message: `Computor index updated to ${currentComputorIndex}. Miners will receive the new job on next request.` 
+          message: `Updated computor index ${computorDistribution[index].index} weight to ${weight}%` 
         }));
       } catch (error) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -1052,9 +1644,229 @@ const statsServer = http.createServer((req, res) => {
       }
     });
   }
-  else if (req.url === '/' || req.url === '/index.html') {
+  // Re-route /computors to serve the admin UI
+  else if (req.url === '/computors') {
     res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(generateComputorSettingsHTML());
+    res.end(generateEnhancedHTML());
+  }
+  
+  else if (req.url === '/stats' || req.url === '/api/stats') {
+    const stats = generateStats();
+    
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(stats, null, 2));
+    
+    if (CONFIG.verbose) {
+      console.log(`[STATS] Served to ${req.socket.remoteAddress}`);
+    }
+  } 
+  else if (req.url === '/computor-list') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(computorIdentities, null, 2));
+  }
+  else if (req.url === '/add-computor' && req.method === 'POST') {
+    let body = '';
+    
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+    
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const newIndex = parseInt(data.index);
+        const weight = parseInt(data.weight);
+        const identity = data.identity || null;
+        
+        if (isNaN(newIndex) || newIndex < 0 || newIndex > 675) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'Invalid computor index' }));
+          return;
+        }
+        
+        if (isNaN(weight) || weight < 1 || weight > 100) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'Invalid weight' }));
+          return;
+        }
+        
+        // Check if index already exists
+        const existingIndex = computorDistribution.findIndex(item => item.index === newIndex);
+        if (existingIndex !== -1) {
+          // Update existing entry
+          computorDistribution[existingIndex].weight = weight;
+          if (identity) {
+            computorDistribution[existingIndex].identity = identity;
+          }
+        } else {
+          // Add new entry
+          computorDistribution.push({
+            index: newIndex,
+            weight: weight,
+            identity: identity
+          });
+        }
+        
+        saveComputorDistribution();
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          success: true, 
+          message: `Computor index ${newIndex} added with weight ${weight}%` 
+        }));
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: 'Invalid request format' }));
+      }
+    });
+  }
+  else if (req.url === '/remove-computor' && req.method === 'POST') {
+    let body = '';
+    
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+    
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const indexToRemove = parseInt(data.index);
+        
+        if (isNaN(indexToRemove) || indexToRemove < 0 || indexToRemove >= computorDistribution.length) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'Invalid index' }));
+          return;
+        }
+        
+        computorDistribution.splice(indexToRemove, 1);
+        
+        saveComputorDistribution();
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          success: true, 
+          message: 'Computor removed successfully' 
+        }));
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: 'Invalid request format' }));
+      }
+    });
+  }
+  else if (req.url === '/add-identity-batch' && req.method === 'POST') {
+    let body = '';
+    
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+    
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const identities = data.identities;
+        const weight = parseInt(data.weight);
+        
+        if (!Array.isArray(identities) || identities.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'Invalid identities' }));
+          return;
+        }
+        
+        if (isNaN(weight) || weight < 1 || weight > 100) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'Invalid weight' }));
+          return;
+        }
+        
+        let added = 0;
+        let notFound = [];
+        
+        for (const identity of identities) {
+          const index = findComputorIndex(identity);
+          
+          if (index !== -1) {
+            // Check if index already exists in distribution
+            const existingIndex = computorDistribution.findIndex(item => item.index === index);
+            if (existingIndex !== -1) {
+              // Update existing entry
+              computorDistribution[existingIndex].weight = weight;
+              computorDistribution[existingIndex].identity = identity;
+            } else {
+              // Add new entry
+              computorDistribution.push({
+                index: index,
+                weight: weight,
+                identity: identity
+              });
+            }
+            added++;
+          } else {
+            notFound.push(identity);
+          }
+        }
+        
+        saveComputorDistribution();
+        
+        let message = `Added ${added} identities with weight ${weight}%.`;
+        if (notFound.length > 0) {
+          message += ` ${notFound.length} identities not found in current epoch.`;
+        }
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          success: true, 
+          message: message,
+          notFound: notFound
+        }));
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: 'Invalid request format: ' + error.message }));
+      }
+    });
+  }
+  else if (req.url === '/fetch-computor-list' && req.method === 'POST') {
+    let body = '';
+    
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+    
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const epoch = parseInt(data.epoch);
+        
+        if (isNaN(epoch) || epoch < 1) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'Invalid epoch number' }));
+          return;
+        }
+        
+        fetchComputorList(epoch, (error, identities) => {
+          if (error) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+              success: false, 
+              message: `Failed to fetch computor list: ${error.message}` 
+            }));
+          } else {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+              success: true, 
+              message: `Retrieved ${identities.length} computors for epoch ${epoch}`,
+              identities: identities
+            }));
+          }
+        });
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: 'Invalid request format' }));
+      }
+    });
+  }
+  else if (req.url === '/index.html') {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(generateEnhancedHTML());
   }
   else {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -1086,7 +1898,7 @@ shareDistributionServer.listen(CONFIG.shareDistributionPort, '0.0.0.0', () => {
 
 statsServer.listen(CONFIG.statsPort, '0.0.0.0', () => {
   console.log(`[STARTUP] HTTP server on 0.0.0.0:${CONFIG.statsPort}`);
-  console.log(`[STARTUP] UI available at http://localhost:${CONFIG.statsPort}/`);
+  console.log(`[STARTUP] Admin UI available at http://localhost:${CONFIG.statsPort}/admin/computors`);
 });
 
 // Start intervals
@@ -1094,6 +1906,18 @@ setInterval(sendKeepaliveToMiners, CONFIG.keepaliveInterval);
 setInterval(saveStatsToFile, CONFIG.statsInterval);
 setInterval(savePersistentStats, CONFIG.persistentStatsInterval);
 setInterval(checkAndResetShares, 60000);
+
+// Get initial computor list if none exists
+if (computorIdentities.length === 0) {
+  console.log(`[API] Fetching initial computor list for epoch ${currentEpoch}...`);
+  fetchComputorList(currentEpoch, (error, identities) => {
+    if (error) {
+      console.error(`[API] Error fetching initial computor list: ${error.message}`);
+    } else {
+      console.log(`[API] Initial computor list loaded with ${identities.length} identities`);
+    }
+  });
+}
 
 // Log stats periodically
 setInterval(() => {
@@ -1103,7 +1927,7 @@ setInterval(() => {
   console.log(`Shares: ${stats.totalShares}`);
   console.log(`Hashrate: ${stats.totalHashrateFormatted}`);
   console.log(`Miners: ${stats.minerCount.active}/${stats.minerCount.total}`);
-  console.log(`Computor: ${stats.currentComputorIndex}`);
+  console.log(`Computors: ${stats.computorDistribution.length}`);
   console.log(`Last Reset: ${new Date(lastShareReset).toLocaleString()} (UTC)`);
   
   const activeWorkers = stats.workers.filter(w => w.active && w.shares > 0);
@@ -1173,6 +1997,6 @@ setInterval(() => {
     console.log('[HEALTH] Waiting for connections...');
     console.log('[HEALTH] Miner port:', CONFIG.minerPort);
     console.log('[HEALTH] Dashboard port:', CONFIG.statsPort);
-    console.log('[HEALTH] Computor index:', currentComputorIndex);
+    console.log('[HEALTH] Computors:', computorDistribution.length);
   }
 }, 60000);
