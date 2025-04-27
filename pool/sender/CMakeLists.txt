@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Qiner LANGUAGES CXX)
+project(Sender LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
@@ -19,7 +19,7 @@ else()
 endif()
 
 # Main executable
-add_executable(${PROJECT_NAME} src/Qiner.cpp src/keyUtils.cpp)
+add_executable(${PROJECT_NAME} src/Sender.cpp src/keyUtils.cpp)
 
 include_directories(${PROJECT_NAME} ./src)
 
