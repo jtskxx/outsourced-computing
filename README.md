@@ -1,14 +1,24 @@
-# Qubic Outsourced Computing
+# 🏝️ Qubic Outsourced Computing 🏝️
 
-Find information about outsourced computing in Qubic.
+Information about outsourced computing in the Qubic network. 🌊
 
-## Base Concept
-In Qubic the power brung by the AI Trainers (Miners) can be used to support different projects.
+---
 
-Currently 50% of the time is allocated to Aigarth. The other 50% are used individually.
+## 📜 Base Concept
 
+In Qubic, the computational power from AI Trainers (Miners) is divided:
 
-## Monero POC
-To demonstrate the capability on how the second 50% can be used. Qubic will run a POC (Prove of concept) with integrating Monero mining into Qubic.
+- 🧠 **50%** is used for **Aigarth** (Qubic AI project).
+- 🛠️ **50%** is available for **external projects**.
 
-Please find the POC description in [Monero POC](monero-poc/README.md).
+This allows Qubic to support multiple initiatives beyond internal development. 🥥
+
+---
+
+## 🚀 Monero Proof of Concept (PoC)
+
+To demonstrate how the second 50% can be used, Qubic is running a **Proof of Concept** with **Monero mining**:
+
+- 🪙 Miners will mine **Monero** during their outsourced time.
+- 📡 This shows Qubic’s ability to process **external workloads** alongside its own tasks.
+
