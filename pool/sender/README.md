@@ -1,32 +1,36 @@
-# Sender (XMR-Stratum -> Qubic Network)
+# 🚀 Sender (XMR-Stratum ➡️ Qubic Network)
 
-**Sender** is a custom-built solution based on **Qiner** that connects the XMR-Stratum  to the **Qubic Network**.  
-Its primary role is to receive mining solutions (shares) via TCP and relay them correctly within the Qubic environment by signing them with a valid Computor identity.
-
----
-
-## Features
-
--  **TCP Listener for XMR-Stratum**: Accepts Monero mining solutions via TCP connections.
--  **Seed Signing & Validation**: Ensures that only authorized Computors relay solutions into the network.
--  **Key Management**: Lightweight cryptographic functions for handling seeds, subseeds, public/private key generation, and identity verification.
+**Sender** is a custom-built bridge (based on **Qiner**) that connects an **XMR-Stratum server** directly to the **Qubic Network**.  
+It **receives mining solutions (shares)** via TCP and **relays** them securely into the Qubic system — **signing** each with a valid Computor identity. 🛰️
 
 ---
 
-## How It Works
+## ✨ Features
 
-- Solutions are sent from an XMR-Stratum server via TCP.
-- The Sender authenticates these solutions by:
-  - Generating a **subseed** from the given Computor seed.
-  - Deriving a **private key** and **public key** from the subseed.
-  - Creating a **Computor Identity** from the public key.
+- 📡 **TCP Listener for XMR-Stratum**: Accepts Monero mining solutions over TCP.
+- 🔒 **Seed Signing & Validation**: Verifies and signs solutions before submitting to Qubic.
 
 ---
 
-## Dependencies
+## 🛠️ How It Works
 
-- `keyUtils.h`
-- `K12AndKeyUtil.h`
-- Standard C++ libraries (`<cstdint>`, `<vector>`, etc.).
+1. ✅ Solutions are sent from an **XMR-Stratum** server over **TCP**.
+2. ✅ **Sender** processes each solution.
+3. ✅ The signed solution is then properly formatted and broadcast into the **Qubic Network**.
 
+---
 
+## 📦 Dependencies
+
+- [`keyUtils.h`](keyUtils.h)
+- [`K12AndKeyUtil.h`](K12AndKeyUtil.h)
+- Standard C++ libraries (`<cstdint>`, `<vector>`, etc.)
+
+---
+
+## 📚 Notes
+
+- Sender must have **access to the Computor seed** to properly authenticate solutions.
+- Lightweight and optimized for **low-latency mining relay**.
+
+![image](https://github.com/user-attachments/assets/54b99714-8a69-4fa9-852b-254e0b50287f)
