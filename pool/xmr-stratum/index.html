@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QUBIC <--> XMR Proxy Settings</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f7f7f7;
+    }
+    h1, h2, h3 {
+      color: #2c3e50;
+    }
+    .card {
+      background: white;
+      border-radius: 5px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    input[type="number"], input[type="text"], textarea, select {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 16px;
+    }
+    button {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      margin-right: 5px;
+      margin-bottom: 5px;
+    }
+    button:hover {
+      background-color: #2980b9;
+    }
+    .info {
+      background-color: #e7f5fe;
+      padding: 15px;
+      border-left: 4px solid #3498db;
+      margin-bottom: 20px;
+    }
+    .warning {
+      background-color: #fff8e1;
+      padding: 15px;
+      border-left: 4px solid #ffa000;
+      margin-bottom: 20px;
+    }
+    .error {
+      background-color: #fdecea;
+      padding: 15px;
+      border-left: 4px solid #e53935;
+      margin-bottom: 20px;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .stat-box {
+      background: #f9f9f9;
+      padding: 15px;
+      border-radius: 4px;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.05);
+    }
+    .stat-value {
+      font-size: 20px;
+      font-weight: bold;
+      color: #2c3e50;
+    }
+    .stat-label {
+      color: #7f8c8d;
+      font-size: 14px;
+    }
+    .computor-item {
+      display: flex;
+      align-items: center;
+      background: #f5f5f5;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+    .computor-index {
+      width: 80px;
+      font-weight: bold;
+    }
+    .computor-weight {
+      width: 150px;
+      display: flex;
+      align-items: center;
+    }
+    .weight-input {
+      width: 50px;
+      margin-right: 5px;
+      padding: 5px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    .save-btn {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .computor-identity {
+      flex-grow: 1;
+      font-family: monospace;
+      word-break: break-all;
+      font-size: 14px;
+      color: #666;
+    }
+    .computor-action {
+      margin-left: 10px;
+    }
+    .computor-list {
+      max-height: 400px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 10px;
+      margin-top: 10px;
+    }
+    .tab {
+      overflow: hidden;
+      border: 1px solid #ccc;
+      background-color: #f1f1f1;
+      border-radius: 4px 4px 0 0;
+    }
+    .tab button {
+      background-color: inherit;
+      color: #333;
+      float: left;
+      border: none;
+      outline: none;
+      cursor: pointer;
+      padding: 14px 16px;
+      transition: 0.3s;
+      font-size: 16px;
+      border-radius: 0;
+      margin: 0;
+    }
+    .tab button:hover {
+      background-color: #ddd;
+    }
+    .tab button.active {
+      background-color: #3498db;
+      color: white;
+    }
+    .tabcontent {
+      display: none;
+      padding: 20px;
+      border: 1px solid #ccc;
+      border-top: none;
+      border-radius: 0 0 4px 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>QUBIC <--> XMR Proxy Settings</h1>
+  
+  <div class="tab">
+    <button class="tablinks active" onclick="openTab(event, 'ComputorTab')">Computor Management</button>
+    <button class="tablinks" onclick="openTab(event, 'StatsTab')">Mining Stats</button>
+    <button class="tablinks" onclick="openTab(event, 'APITab')">Computor API</button>
+  </div>
+  
+  <div id="ComputorTab" class="tabcontent" style="display: block;">
+    <div class="info">
+      Manage multiple computor indices with weighted distribution. The proxy will assign computor indices based on these weights.
+    </div>
+    
+    <div class="card">
+      <h2>Computor Distribution</h2>
+      <div id="computorDistribution"></div>
+      
+      <h3>Add New Computor</h3>
+      <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+        <div style="flex: 1;">
+          <label for="newComputorIndex">Index (0-675):</label>
+          <input type="number" id="newComputorIndex" min="0" max="675">
+        </div>
+        <div style="flex: 1;">
+          <label for="newComputorWeight">Weight (%):</label>
+          <input type="number" id="newComputorWeight" min="1" max="100" value="10">
+        </div>
+      </div>
+      <button onclick="addComputor()">Add Computor</button>
+      <div id="computorResult"></div>
+    </div>
+    
+    <div class="card">
+      <h2>Batch Add by Identity</h2>
+      <div class="info">
+        Paste Qubic identity strings, one per line. Each identity will be converted to its index number.
+      </div>
+      <textarea id="identityBatch" rows="5" placeholder="Paste Qubic identity strings here, one per line..."></textarea>
+      <div style="margin-bottom: 10px;">
+        <label for="batchWeight">Weight for each (%):</label>
+        <input type="number" id="batchWeight" min="1" max="100" value="10">
+      </div>
+      <button onclick="addIdentityBatch()">Add Identities</button>
+      <div id="batchResult"></div>
+    </div>
+  </div>
+  
+  <div id="StatsTab" class="tabcontent">
+    <div class="card">
+      <h2>Mining Statistics</h2>
+      <div class="stats">
+        <div class="stat-box">
+          <div class="stat-value" id="totalShares">-</div>
+          <div class="stat-label">Total Shares</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="activeMiners">-</div>
+          <div class="stat-label">Active Miners</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="totalHashrate">-</div>
+          <div class="stat-label">Total Hashrate</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="uptime">-</div>
+          <div class="stat-label">Uptime</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <div id="APITab" class="tabcontent">
+    <div class="card">
+      <h2>Computor API</h2>
+      <div class="info">
+        Fetch the computor list from the Qubic API for a specific epoch. This will update the available identities.
+      </div>
+      
+      <div style="display: flex; gap: 10px; align-items: flex-end; margin-bottom: 10px;">
+        <div style="flex: 1;">
+          <label for="epochNumber">Epoch Number:</label>
+          <input type="number" id="epochNumber" min="1" value="${currentEpoch}">
+        </div>
+        <button onclick="fetchComputorList()">Get Computor List</button>
+      </div>
+      
+      <div id="apiResult"></div>
+      
+      <h3>Computor List</h3>
+      <div class="info">Current Epoch: <span id="currentEpoch">${currentEpoch}</span></div>
+      <div id="computorList" class="computor-list">
+        <div id="computorListContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <a href="https://github.com/jtskxx/Jetski-Qubic-Pool" target="_blank">jetskipool.ai</a>
+  </div>
+  
+  <script>
+    // Tab functionality
+    function openTab(evt, tabName) {
+      var i, tabcontent, tablinks;
+      tabcontent = document.getElementsByClassName("tabcontent");
+      for (i = 0; i < tabcontent.length; i++) {
+        tabcontent[i].style.display = "none";
+      }
+      tablinks = document.getElementsByClassName("tablinks");
+      for (i = 0; i < tablinks.length; i++) {
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+      }
+      document.getElementById(tabName).style.display = "block";
+      evt.currentTarget.className += " active";
+      
+      // Refresh data when tab is opened
+      if (tabName === 'StatsTab') {
+        loadStats();
+      } else if (tabName === 'ComputorTab') {
+        loadComputorDistribution();
+      } else if (tabName === 'APITab') {
+        loadComputorList();
+      }
+    }
+    
+    // Format time duration (seconds to days, hours, minutes, seconds)
+    function formatDuration(seconds) {
+      const days = Math.floor(seconds / 86400);
+      seconds %= 86400;
+      const hours = Math.floor(seconds / 3600);
+      seconds %= 3600;
+      const minutes = Math.floor(seconds / 60);
+      seconds = Math.floor(seconds % 60);
+      
+      const parts = [];
+      if (days > 0) parts.push(days + 'd');
+      if (hours > 0) parts.push(hours + 'h');
+      if (minutes > 0) parts.push(minutes + 'm');
+      if (seconds > 0 || parts.length === 0) parts.push(seconds + 's');
+      
+      return parts.join(' ');
+    }
+    
+    // Load mining statistics
+    function loadStats() {
+      fetch('/stats')
+        .then(response => response.json())
+        .then(data => {
+          document.getElementById('totalShares').textContent = data.totalShares;
+          document.getElementById('activeMiners').textContent = data.minerCount.active;
+          document.getElementById('totalHashrate').textContent = data.totalHashrateFormatted;
+          document.getElementById('uptime').textContent = formatDuration(data.uptime);
+        })
+        .catch(error => {
+          console.error('Error loading stats:', error);
+        });
+    }
+    
+    // Load computor distribution with simplified weight editor
+    function loadComputorDistribution() {
+      fetch('/stats')
+        .then(response => response.json())
+        .then(data => {
+          const distributionDiv = document.getElementById('computorDistribution');
+          
+          if (data.computorDistribution && data.computorDistribution.length > 0) {
+            let html = '';
+            data.computorDistribution.forEach((item, i) => {
+              html += `
+                <div class="computor-item" id="computor-${i}">
+                  <div class="computor-index">Index: ${item.index}</div>
+                  <div class="computor-identity">${item.identity || 'Unknown Identity'}</div>
+                  <div class="computor-weight">
+                    <input type="number" id="weight-${i}" class="weight-input" min="1" max="100" value="${item.weight}">
+                    <span>%</span>
+                    <button class="save-btn" onclick="saveWeight(${i})">Save</button>
+                  </div>
+                  <div class="computor-action">
+                    <button onclick="removeComputor(${i})">Remove</button>
+                  </div>
+                </div>
+              `;
+            });
+            
+            distributionDiv.innerHTML = html;
+          } else {
+            distributionDiv.innerHTML = '<div class="info">No computor distribution configured</div>';
+          }
+        })
+        .catch(error => {
+          console.error('Error loading computor distribution:', error);
+        });
+    }
+    
+    // Save weight function (simplified)
+    function saveWeight(index) {
+      const weight = parseInt(document.getElementById(`weight-${index}`).value);
+      
+      if (isNaN(weight) || weight < 1 || weight > 100) {
+        alert('Weight must be between 1 and 100');
+        return;
+      }
+      
+      fetch('/update-computor-weight', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index, weight }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          alert(data.message);
+        } else {
+          alert('Error: ' + data.message);
+        }
+      })
+      .catch(error => {
+        alert('Error: ' + error.message);
+      });
+    }
+    
+    // Load computor list
+    function loadComputorList() {
+      fetch('/stats')
+        .then(response => response.json())
+        .then(data => {
+          document.getElementById('currentEpoch').textContent = data.currentEpoch || 'Unknown';
+          
+          fetch('/computor-list')
+            .then(response => response.json())
+            .then(listData => {
+              const listDiv = document.getElementById('computorListContent');
+              
+              if (listData && listData.length > 0) {
+                let html = '';
+                listData.forEach((identity, index) => {
+                  html += `
+                    <div style="margin-bottom: 5px; display: flex; align-items: center;">
+                      <span style="font-weight: bold; min-width: 60px;">${index}:</span>
+                      <span style="font-family: monospace; word-break: break-all; flex-grow: 1;">${identity}</span>
+                      <button onclick="addIdentityFromList(${index}, '${identity}')" style="margin-left: 10px;">Add</button>
+                    </div>
+                  `;
+                });
+                
+                listDiv.innerHTML = html;
+              } else {
+                listDiv.innerHTML = '<div class="info">No computor list available. Use "Get Computor List" to fetch the list.</div>';
+              }
+            })
+            .catch(error => {
+              console.error('Error loading computor list:', error);
+              document.getElementById('computorListContent').innerHTML = 
+                '<div class="error">Error loading computor list. Use "Get Computor List" to fetch the list.</div>';
+            });
+        })
+        .catch(error => {
+          console.error('Error loading stats:', error);
+        });
+    }
+    
+    // Add computor
+    function addComputor() {
+      const index = parseInt(document.getElementById('newComputorIndex').value);
+      const weight = parseInt(document.getElementById('newComputorWeight').value);
+      
+      if (isNaN(index) || index < 0 || index > 675) {
+        document.getElementById('computorResult').innerHTML = 
+          '<div class="error">Invalid computor index! Must be between 0 and 675.</div>';
+        return;
+      }
+      
+      if (isNaN(weight) || weight < 1 || weight > 100) {
+        document.getElementById('computorResult').innerHTML = 
+          '<div class="error">Invalid weight! Must be between 1 and 100.</div>';
+        return;
+      }
+      
+      fetch('/add-computor', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index, weight }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('computorResult').innerHTML = 
+            `<div class="info">${data.message}</div>`;
+          
+          // Clear inputs
+          document.getElementById('newComputorIndex').value = '';
+          
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          document.getElementById('computorResult').innerHTML = 
+            `<div class="error">${data.message}</div>`;
+        }
+      })
+      .catch(error => {
+        document.getElementById('computorResult').innerHTML = 
+          `<div class="error">Error: ${error.message}</div>`;
+      });
+    }
+    
+    // Remove computor
+    function removeComputor(index) {
+      fetch('/remove-computor', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          alert("Error removing computor: " + data.message);
+        }
+      })
+      .catch(error => {
+        alert("Error: " + error.message);
+      });
+    }
+    
+    // Add identity from list
+    function addIdentityFromList(index, identity) {
+      const weight = 10; // Default weight
+      
+      fetch('/add-computor', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index, weight, identity }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          alert("Added computor " + index + " with weight " + weight + "%");
+          
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          alert("Error adding computor: " + data.message);
+        }
+      })
+      .catch(error => {
+        alert("Error: " + error.message);
+      });
+    }
+    
+    // Add identity batch
+    function addIdentityBatch() {
+      const identities = document.getElementById('identityBatch').value.trim().split('\\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
+      
+      const weight = parseInt(document.getElementById('batchWeight').value);
+      
+      if (identities.length === 0) {
+        document.getElementById('batchResult').innerHTML = 
+          '<div class="error">Please enter at least one identity.</div>';
+        return;
+      }
+      
+      if (isNaN(weight) || weight < 1 || weight > 100) {
+        document.getElementById('batchResult').innerHTML = 
+          '<div class="error">Invalid weight! Must be between 1 and 100.</div>';
+        return;
+      }
+      
+      fetch('/add-identity-batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ identities, weight }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('batchResult').innerHTML = 
+            `<div class="info">${data.message}</div>`;
+          
+          // Clear textarea
+          document.getElementById('identityBatch').value = '';
+          
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          document.getElementById('batchResult').innerHTML = 
+            `<div class="error">${data.message}</div>`;
+        }
+      })
+      .catch(error => {
+        document.getElementById('batchResult').innerHTML = 
+          `<div class="error">Error: ${error.message}</div>`;
+      });
+    }
+    
+    // Fetch computor list
+    function fetchComputorList() {
+      const epoch = parseInt(document.getElementById('epochNumber').value);
+      
+      if (isNaN(epoch) || epoch < 1) {
+        document.getElementById('apiResult').innerHTML = 
+          '<div class="error">Invalid epoch number!</div>';
+        return;
+      }
+      
+      document.getElementById('apiResult').innerHTML = 
+        '<div class="info">Fetching computor list for epoch ' + epoch + '...</div>';
+      
+      fetch('/fetch-computor-list', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ epoch }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('apiResult').innerHTML = 
+            `<div class="info">${data.message}</div>`;
+          
+          // Update current epoch display
+          document.getElementById('currentEpoch').textContent = epoch;
+          
+          // Reload computor list
+          loadComputorList();
+        } else {
+          document.getElementById('apiResult').innerHTML = 
+            `<div class="error">${data.message}</div>`;
+        }
+      })
+      .catch(error => {
+        document.getElementById('apiResult').innerHTML = 
+          `<div class="error">Error: ${error.message}</div>`;
+      });
+    }
+    
+    // Load initial data
+    loadStats();
+    loadComputorDistribution();
+    
+    // Refresh data periodically
+    setInterval(loadStats, 10000);
+  </script>
+</body>
+</html>
