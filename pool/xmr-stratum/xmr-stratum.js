@@ -57,6 +57,11 @@ let computorDistribution = []; // Array of {index, weight, identity}
 let computorIdentities = []; // Array of identities from the API
 let currentEpoch = CONFIG.defaultEpoch;
 
+// New nonce tracking state
+const nonceRangeMap = new Map(); // Map of nonce ranges to job IDs
+const recentJobs = new Map(); // Cache of recent jobs
+const MAX_RECENT_JOBS = 5; // Keep track of last 5 jobs
+
 function getNextComputorIndex() {
   if (computorDistribution.length === 0) {
     return 0; // Default if no distribution defined
@@ -80,6 +85,58 @@ function getNextComputorIndex() {
 function initializeNonce() {
   nextNonceStartValue = Math.floor(Math.random() * 2147483648);
   console.log(`[NONCE] Initialized next nonce start value to ${nextNonceStartValue}`);
+}
+
+// Modified to track job ID
+function allocateNonceRange(jobId) {
+  const start_nonce = nextNonceStartValue;
+  const end_nonce = start_nonce + CONFIG.nonceRangeSize;
+  
+  nextNonceStartValue = end_nonce;
+  
+  // Store the nonce range mapping
+  const rangeKey = `${start_nonce},${end_nonce}`;
+  nonceRangeMap.set(rangeKey, jobId);
+  
+  if (CONFIG.verbose) {
+    console.log(`[NONCE] Allocated range ${start_nonce}-${end_nonce} for job ${jobId}`);
+  }
+  
+  return { start_nonce, end_nonce };
+}
+
+// Function to find which job a nonce belongs to
+function findJobForNonce(nonce) {
+  for (const [rangeStr, jobId] of nonceRangeMap.entries()) {
+    const [start, end] = rangeStr.split(',').map(Number);
+    if (nonce >= start && nonce <= end) {
+      return jobId;
+    }
+  }
+  return null; // Nonce not found in any known range
+}
+
+// Function to clean up old job mappings
+function cleanupOldJobMappings() {
+  // Only keep mappings for recent jobs
+  const validJobIds = new Set(recentJobs.keys());
+  
+  // Create array of entries to delete (to avoid modifying during iteration)
+  const toDelete = [];
+  for (const [rangeStr, jobId] of nonceRangeMap.entries()) {
+    if (!validJobIds.has(jobId)) {
+      toDelete.push(rangeStr);
+    }
+  }
+  
+  // Delete old entries
+  for (const rangeStr of toDelete) {
+    nonceRangeMap.delete(rangeStr);
+  }
+  
+  if (CONFIG.verbose && toDelete.length > 0) {
+    console.log(`[CLEANUP] Removed ${toDelete.length} old nonce range mappings`);
+  }
 }
 
 function loadComputorSettings() {
@@ -374,6 +431,18 @@ function connectToTaskSource() {
           
           console.log(`[QUBIC] Using computor index: ${currentJob.job.computorIndex} for job ${currentJob.job.job_id}`);
           
+          // Store the job in recent jobs cache
+          recentJobs.set(currentJob.job.job_id, JSON.parse(JSON.stringify(currentJob)));
+          
+          // If we have too many recent jobs, remove the oldest one
+          if (recentJobs.size > MAX_RECENT_JOBS) {
+            const oldestJobId = recentJobs.keys().next().value;
+            recentJobs.delete(oldestJobId);
+            
+            // Also clean up nonce ranges for old jobs
+            cleanupOldJobMappings();
+          }
+          
           broadcastToMiners();
         }
         
@@ -438,15 +507,6 @@ function calculateHashrate(shareHistory) {
   return hashrate;
 }
 
-function allocateNonceRange() {
-  const start_nonce = nextNonceStartValue;
-  const end_nonce = start_nonce + CONFIG.nonceRangeSize;
-  
-  nextNonceStartValue = end_nonce;
-  
-  return { start_nonce, end_nonce };
-}
-
 const minerServer = net.createServer((socket) => {
   const minerId = `${socket.remoteAddress}:${socket.remotePort}`;
   console.log(`[MINER] Connected: ${minerId}`);
@@ -509,7 +569,14 @@ const minerServer = net.createServer((socket) => {
               minerInfo.workerName = loginParts.length > 1 ? loginParts[1] : 'default';
               minerInfo.workerKey = getWorkerKey(minerInfo.wallet, minerInfo.workerName);
               minerInfo.lastSeen = new Date().toISOString();
-              minerInfo.nonceRange = allocateNonceRange();
+              
+              // Pass job ID to allocateNonceRange
+              if (currentJob && currentJob.job && currentJob.job.job_id) {
+                minerInfo.nonceRange = allocateNonceRange(currentJob.job.job_id);
+              } else {
+                minerInfo.nonceRange = { start_nonce: 0, end_nonce: 0 };
+              }
+              
               miners.set(minerId, minerInfo);
               
               const workerStat = getOrCreateWorkerStats(minerInfo.wallet, minerInfo.workerName);
@@ -588,7 +655,8 @@ const minerServer = net.createServer((socket) => {
         else if (message.method === 'getjob') {
           const minerInfo = miners.get(minerId);
           if (minerInfo && currentJob) {
-            minerInfo.nonceRange = allocateNonceRange();
+            // Pass job ID to allocateNonceRange
+            minerInfo.nonceRange = allocateNonceRange(currentJob.job.job_id);
             miners.set(minerId, minerInfo);
             
             // Get a fresh computor index for this job request
@@ -651,8 +719,24 @@ const minerServer = net.createServer((socket) => {
             
             totalShares++;
             
+            // Find the correct job for this nonce
+            const submittedNonce = parseInt(message.params.nonce);
+            let jobId = message.params.job_id || null;
+            
+            // If job_id wasn't provided or doesn't exist in our cache, try to find it from nonce range
+            if (!jobId || !recentJobs.has(jobId)) {
+              jobId = findJobForNonce(submittedNonce);
+            }
+            
+            // Get the job data from our cache
+            const jobForShare = jobId && recentJobs.has(jobId) ? recentJobs.get(jobId) : currentJob;
+            
+            if (jobId && jobId !== currentJob.job.job_id) {
+              console.log(`[SHARE] Submitted share for previous job: ${jobId} (current: ${currentJob.job.job_id})`);
+            }
+            
             console.log(`[SHARE] Miner ${minerId} (${minerInfo.wallet}, Worker: ${minerInfo.workerName}) found a share! Total: ${workerStat ? workerStat.shares : minerInfo.shares}`);
-            console.log(`[SHARE] *** SOLUTION FOUND FOR JOB: ${currentJob ? currentJob.job.job_id : 'Unknown'} ***`);
+            console.log(`[SHARE] *** SOLUTION FOUND FOR JOB: ${jobForShare ? jobForShare.job.job_id : 'Unknown'} ***`);
             
             const shareResponse = {
               id: message.id,
@@ -674,8 +758,8 @@ const minerServer = net.createServer((socket) => {
                 nonce: message.params.nonce,
                 result: message.params.result
               },
-              task_id: currentJob ? currentJob.id : null,
-              task_seed_hash: currentJob && currentJob.job ? currentJob.job.seed_hash : null,
+              task_id: jobForShare ? jobForShare.id : null,
+              task_seed_hash: jobForShare && jobForShare.job ? jobForShare.job.seed_hash : null,
               computorIndex: computorIndex
             };
             
@@ -811,7 +895,8 @@ function broadcastToMiners() {
   
   miners.forEach((minerInfo, minerId) => {
     if (minerInfo.connected && minerInfo.socket && minerInfo.socket.writable) {
-      minerInfo.nonceRange = allocateNonceRange();
+      // Pass job ID to allocateNonceRange
+      minerInfo.nonceRange = allocateNonceRange(currentJob.job.job_id);
       miners.set(minerId, minerInfo);
       
       // Get a fresh computor index for broadcast
@@ -1906,6 +1991,7 @@ setInterval(sendKeepaliveToMiners, CONFIG.keepaliveInterval);
 setInterval(saveStatsToFile, CONFIG.statsInterval);
 setInterval(savePersistentStats, CONFIG.persistentStatsInterval);
 setInterval(checkAndResetShares, 60000);
+setInterval(cleanupOldJobMappings, 300000); // Clean up old job mappings every 5 minutes
 
 // Get initial computor list if none exists
 if (computorIdentities.length === 0) {
