@@ -50,6 +50,8 @@ struct task
     uint8_t gammingNonce[32];
 
     uint64_t taskIndex; // ever increasing number (unix timestamp in ms)
+    uint16_t firstComputorIndex, lastComputorIndex; // New fields
+    uint32_t padding; // New field
 
     uint8_t m_blob[408]; // Job data from pool
     uint64_t m_size;  // length of the blob
@@ -67,8 +69,9 @@ struct solution
     uint8_t gammingNonce[32];
 
     uint64_t _taskIndex;
+    uint16_t firstComputorIndex, lastComputorIndex; // New fields
+    
     uint32_t nonce;         // xmrig::JobResult.nonce
-    uint32_t padding; // reserve for future use
     uint8_t result[32];   // xmrig::JobResult.result
     uint8_t signature[64];
 };
@@ -280,11 +283,21 @@ void verifyThread()
             {
                 continue;
             }
+            
+            // Check if the nonce is from a valid computor index range
+            uint32_t nonce = candidate.nonce;
+            
+            // Verify that computor indices match
+            if (candidate.firstComputorIndex != local_task.firstComputorIndex || 
+                candidate.lastComputorIndex != local_task.lastComputorIndex) {
+                gInValid.fetch_add(1);
+                continue;
+            }
+            
             uint8_t out[32];
             std::vector<uint8_t> blob;
             blob.resize(local_task.m_size, 0);
             memcpy(blob.data(), local_task.m_blob, local_task.m_size);
-            uint32_t nonce = candidate.nonce;
             memcpy(blob.data() + XMR_NONCE_POS, &nonce, 4);
             randomx_calculate_hash(vm, blob.data(), local_task.m_size, out);
             uint64_t v = ((uint64_t*)out)[3];
@@ -363,7 +376,7 @@ void listenerThread(char* nodeIp)
                         }
                     }
                 }
-                else if (buff.size() == 632)
+                else if (buff.size() == sizeof(task))
                 {
                     task* tk = (task*)buff.data();
                     if (memcmp(dispatcherPubkey, tk->sourcePublicKey, 32) != 0)
@@ -446,16 +459,20 @@ void listenerThread(char* nodeIp)
                         "        \"target\": \"%s\",\n"
                         "        \"algo\": \"rx/0\",\n"
                         "        \"height\": %lu,\n"
-                        "        \"seed_hash\": \"%s\"\n"
+                        "        \"seed_hash\": \"%s\",\n"
+                        "        \"first_computor_index\": %u,\n"
+                        "        \"last_computor_index\": %u\n"
                         "    },\n"
-                        "    \"extensions\": [\"algo\", \"height\", \"seed_hash\"]\n"
+                        "    \"extensions\": [\"algo\", \"height\", \"seed_hash\", \"first_computor_index\", \"last_computor_index\"]\n"
                         "}\n",
                         (unsigned long)tk->taskIndex,
                         hexBlob,
                         (unsigned long)tk->taskIndex,
                         hexTarget,
                         (unsigned long)tk->m_height,
-                        hexSeed
+                        hexSeed,
+                        tk->firstComputorIndex,
+                        tk->lastComputorIndex
                     );
 
                     debug_log += std::string(jsonOutput);
