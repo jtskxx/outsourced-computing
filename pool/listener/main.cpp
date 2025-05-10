@@ -43,6 +43,14 @@ uint8_t dispatcherPubkey[32] = { 0 };
 #define SLEEP(x) std::this_thread::sleep_for(std::chrono::milliseconds (x));
 bool shouldExit = false;
 uint64_t prevTask = 0;
+
+// New variables for reconnection feature
+std::mutex lastTaskTimeMutex;
+std::chrono::time_point<std::chrono::system_clock> lastTaskTime;
+std::atomic<bool> forceReconnect(false);
+std::atomic<int> reconnectingThreads(0);
+int totalPeerThreads = 0;  // Will be set in run() to argc-1
+
 struct task
 {
     uint8_t sourcePublicKey[32]; // the source public key is the DISPATCHER public key
@@ -92,6 +100,39 @@ std::atomic<int> nPeer;
 // TCP server for JSON broadcasting
 std::vector<socket_t> clientSockets;
 std::mutex clientSocketsMutex;
+
+// Monitor thread function to detect task reception timeouts
+void monitorTaskReception() {
+    // Initialize lastTaskTime
+    {
+        std::lock_guard<std::mutex> lock(lastTaskTimeMutex);
+        lastTaskTime = std::chrono::system_clock::now();
+    }
+    
+    while (!shouldExit) {
+        bool shouldForceReconnect = false;
+        
+        {
+            std::lock_guard<std::mutex> lock(lastTaskTimeMutex);
+            auto now = std::chrono::system_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastTaskTime).count();
+            
+            // If more than 60 seconds have passed since the last task, force reconnection
+            if (elapsed > 60 && !forceReconnect.load()) {
+                printf("WARNING: No tasks received for %ld seconds. Forcing reconnection to all peers.\n", elapsed);
+                shouldForceReconnect = true;
+            }
+        }
+        
+        if (shouldForceReconnect) {
+            forceReconnect.store(true);
+            reconnectingThreads.store(totalPeerThreads);
+        }
+        
+        // Check every 5 seconds
+        SLEEP(5000);
+    }
+}
 
 // Send message to all connected clients
 void broadcastToClients(const std::string& message) {
@@ -325,24 +366,55 @@ void listenerThread(char* nodeIp)
 {
     QCPtr qc;
     bool needReconnect = true;
+    bool wasForceReconnected = false;
     std::string log_header = "[" + std::string(nodeIp) + "]: ";
     while (!shouldExit)
     {
         try {
+            // Check if we need to force reconnection
+            if (forceReconnect.load() && !wasForceReconnected) {
+                printf("%sForcing reconnection due to task timeout\n", log_header.c_str());
+                needReconnect = true;
+                wasForceReconnected = true;
+            }
+            
             if (needReconnect) {
+                // Only increment peer count if this is not a forced reconnection
+                if (!wasForceReconnected) {
+                    nPeer.fetch_add(1);
+                }
+                
                 needReconnect = false;
-                nPeer.fetch_add(1);
                 qc = make_qc(nodeIp, PORT);
                 qc->exchangePeer();// do the handshake stuff
-                // TODO: connect to received peers
+                
+                // If this was a forced reconnection
+                if (wasForceReconnected) {
+                    int remaining = reconnectingThreads.fetch_sub(1) - 1;
+                    
+                    // If this was the last thread to reconnect, reset the force flag
+                    if (remaining == 0) {
+                        forceReconnect.store(false);
+                        printf("All peers have been reconnected.\n");
+                        
+                        // Reset the last task time to now
+                        std::lock_guard<std::mutex> timelock(lastTaskTimeMutex);
+                        lastTaskTime = std::chrono::system_clock::now();
+                    }
+                    
+                    wasForceReconnected = false;
+                }
             }
+            
             auto header = qc->receiveHeader();
             std::vector<uint8_t> buff;
             uint32_t sz = header.size();
             if (sz > 0xFFFFFF)
             {
                 needReconnect = true;
-                nPeer.fetch_add(-1);
+                if (!wasForceReconnected) {
+                    nPeer.fetch_add(-1);
+                }
                 continue;
             }
             sz -= sizeof(RequestResponseHeader);
@@ -403,6 +475,10 @@ void listenerThread(char* nodeIp)
                         if (currentTask.taskIndex < tk->taskIndex)
                         {
                             currentTask = *tk;
+                            
+                            // Update the last task time whenever a new task is received
+                            std::lock_guard<std::mutex> timelock(lastTaskTimeMutex);
+                            lastTaskTime = std::chrono::system_clock::now();
                         }
                         else
                         {
@@ -494,7 +570,10 @@ void listenerThread(char* nodeIp)
         }
         catch (std::logic_error& ex) {
             needReconnect = true;
-            nPeer.fetch_add(-1);
+            if (!wasForceReconnected) {
+                nPeer.fetch_add(-1);
+            }
+            wasForceReconnected = false;
             SLEEP(1000);
         }
     }
@@ -506,9 +585,15 @@ int run(int argc, char* argv[]) {
         return 0;
     }
     getPublicKeyFromIdentity(DISPATCHER, dispatcherPubkey);
+    
+    // Set the total number of peer threads
+    totalPeerThreads = argc - 1;
 
     // Start TCP server thread for JSON broadcasting
     std::thread tcpServer(tcpServerThread);
+    
+    // Start monitor thread to check for task timeouts
+    std::thread monitorThread(monitorTaskReception);
 
     std::vector<std::thread> thr;
     for (int i = 0; i < argc - 1; i++)
@@ -528,8 +613,9 @@ int run(int argc, char* argv[]) {
         SLEEP(10000);
     }
 
-    // Wait for TCP server thread to exit
+    // Wait for all threads to exit
     tcpServer.join();
+    monitorThread.join();  // Wait for monitor thread
 
     for (auto& t : thr) {
         if (t.joinable()) {
