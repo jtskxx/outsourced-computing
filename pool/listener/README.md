@@ -24,7 +24,7 @@ make
 ## 🚀 Usage
 
 ```bash
-./listener [node_ip0] [node_ip1] ... [node_ipN]
+./listener
 ```
 
 Connects to multiple Qubic nodes and listens for tasks.
