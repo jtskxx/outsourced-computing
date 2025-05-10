@@ -3,10 +3,17 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <array>
 #include <chrono>
 #include <atomic>
 #include <sstream>
 #include <fstream>
+#include <mutex>
+#include <queue>
+#include <condition_variable>
+#include <algorithm>
+#include <future>
+#include <functional>
 
 #include "K12AndKeyUtil.h"
 #include "keyUtils.h"
@@ -21,6 +28,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <signal.h>
+#include <fcntl.h>
 #endif
 
 // Protocol constants
@@ -30,9 +38,60 @@ constexpr int SIGNATURE_SIZE = 64;        // Qubic signature size in bytes
 
 // Configuration
 const char* HARDCODED_SEED = "seed";  // Default seed for key generation
+constexpr int NODE_PORT = 21841;      // Default Qubic node port
+constexpr int CONNECTION_TIMEOUT_MS = 2500; // 2.5s Connection timeout in milliseconds
+constexpr int MAX_PARALLEL_SUBMISSIONS = 10; // Maximum number of parallel submissions
 
 // Program state (0 = running, 1 = shutdown requested, exit on second signal)
 static std::atomic<char> state(0);
+
+// Node information structure
+class NodeInfo {
+public:
+    std::string ip;
+    int port;
+    int successCount;
+    int failureCount;
+    bool active;
+    
+    NodeInfo(const std::string& ip, int port) 
+        : ip(ip), port(port), successCount(0), failureCount(0), active(true) {}
+    
+    // Calculate success rate
+    float getSuccessRate() const {
+        int total = successCount + failureCount;
+        if (total == 0) return 0.0f;
+        return (float)successCount / total;
+    }
+};
+
+// Vector of nodes to try - using an array for simplicity
+std::array<NodeInfo, 13> nodes = {{
+    {"xxx", NODE_PORT},
+    {"xxx", NODE_PORT},
+    {"xxx", NODE_PORT},
+    {"xxx", NODE_PORT},
+    {"xxx", NODE_PORT},
+    {"xxx", NODE_PORT},
+    {"xxx", NODE_PORT},
+    {"xxx", NODE_PORT},
+    {"xxx", NODE_PORT},
+    {"xxx", NODE_PORT},
+    {"xxx", NODE_PORT},
+    {"xxx", NODE_PORT},
+    {"xxx", NODE_PORT}
+}};
+
+// Mutex for logging and node statistics
+std::mutex logMutex;
+std::mutex nodesMutex;
+
+// Thread-safe logging
+template<typename... Args>
+void log(Args&&... args) {
+    std::lock_guard<std::mutex> lock(logMutex);
+    (std::cout << ... << args) << std::endl;
+}
 
 // Platform-specific signal handling
 #ifdef _MSC_VER
@@ -154,8 +213,9 @@ struct Solution {
     unsigned char zero[32];             // Target public key or zeros for broadcast
     unsigned char gammingNonce[32];     // Nonce for gamming 
     unsigned long long taskIndex;       // Task index from mining task
+    unsigned short firstComputorIndex;  // First computor index from task
+    unsigned short lastComputorIndex;   // Last computor index from task
     unsigned int nonce;                 // Solution nonce value
-    unsigned int padding;               // Reserved
     unsigned char result[32];           // Solution hash result 
     unsigned char signature[64];        // Ed25519 signature
 };
@@ -212,17 +272,24 @@ public:
     }
 
     /**
-     * Connect to a remote host
+     * Connect to a remote host with timeout
      *
      * @param address IP address to connect to
      * @param port Port number to connect to
+     * @param timeoutMs Timeout in milliseconds
      * @return true if connection successful, false otherwise
      */
-    bool connect(const char* address, int port) {
+    bool connect(const char* address, int port, int timeoutMs = CONNECTION_TIMEOUT_MS) {
         // Create socket
         sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (sock == INVALID_SOCKET) {
-            std::cerr << "Failed to create socket: " << WSAGetLastError() << std::endl;
+            return false;
+        }
+
+        // Set socket to non-blocking mode
+        u_long mode = 1;
+        if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
+            closeSocket();
             return false;
         }
 
@@ -234,15 +301,38 @@ public:
 
         // Convert IP address
         if (inet_pton(AF_INET, address, &addr.sin_addr) <= 0) {
-            std::cerr << "Invalid IP address: " << address << std::endl;
             closeSocket();
             return false;
         }
 
-        // Connect to server
-        if (::connect(sock, (const sockaddr*)&addr, sizeof(addr)) != 0) {
-            std::cerr << "Failed to connect to " << address << ":" << port
-                << " (Error: " << WSAGetLastError() << ")" << std::endl;
+        // Attempt to connect
+        if (::connect(sock, (const sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+            if (WSAGetLastError() != WSAEWOULDBLOCK) {
+                closeSocket();
+                return false;
+            }
+        }
+
+        // Wait for connection or timeout
+        fd_set write_set, except_set;
+        FD_ZERO(&write_set);
+        FD_ZERO(&except_set);
+        FD_SET(sock, &write_set);
+        FD_SET(sock, &except_set);
+
+        // Set timeout
+        timeval timeout;
+        timeout.tv_sec = timeoutMs / 1000;
+        timeout.tv_usec = (timeoutMs % 1000) * 1000;
+
+        // Check if the socket is ready
+        int selectResult = select(0, NULL, &write_set, &except_set, &timeout);
+
+        // Set back to blocking mode
+        mode = 0;
+        ioctlsocket(sock, FIONBIO, &mode);
+
+        if (selectResult <= 0 || !FD_ISSET(sock, &write_set) || FD_ISSET(sock, &except_set)) {
             closeSocket();
             return false;
         }
@@ -266,17 +356,18 @@ public:
     }
 
     /**
-     * Connect to a remote host - Unix version
+     * Connect to a remote host with timeout - Unix version
+     * Simplified version that doesn't rely on fcntl
      *
      * @param address IP address to connect to
      * @param port Port number to connect to
+     * @param timeoutMs Timeout in milliseconds
      * @return true if connection successful, false otherwise
      */
-    bool connect(const char* address, int port) {
+    bool connect(const char* address, int port, int timeoutMs = CONNECTION_TIMEOUT_MS) {
         // Create socket
         sock = socket(AF_INET, SOCK_STREAM, 0);
         if (sock < 0) {
-            std::cerr << "Failed to create socket: " << errno << std::endl;
             return false;
         }
 
@@ -288,15 +379,29 @@ public:
 
         // Convert IP address
         if (inet_pton(AF_INET, address, &addr.sin_addr) <= 0) {
-            std::cerr << "Invalid IP address: " << address << std::endl;
             closeSocket();
             return false;
         }
 
-        // Connect to server
+        // Set socket timeout
+        struct timeval tv;
+        tv.tv_sec = timeoutMs / 1000;
+        tv.tv_usec = (timeoutMs % 1000) * 1000;
+        
+        // Set receive timeout
+        if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv)) < 0) {
+            closeSocket();
+            return false;
+        }
+        
+        // Set send timeout
+        if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv)) < 0) {
+            closeSocket();
+            return false;
+        }
+        
+        // Connect to server (blocking with timeout)
         if (::connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-            std::cerr << "Failed to connect to " << address << ":" << port
-                << " (Error: " << errno << ")" << std::endl;
             closeSocket();
             return false;
         }
@@ -320,13 +425,6 @@ public:
             int sent = ::send(socket, buffer, remaining, 0);
 
             if (sent <= 0) {
-                std::cerr << "Send error: " <<
-#ifdef _MSC_VER
-                    WSAGetLastError()
-#else
-                    errno
-#endif
-                    << std::endl;
                 return false;
             }
 
@@ -347,7 +445,7 @@ public:
      */
     bool receive(SocketType socket, char* buffer, unsigned int size) {
         const auto startTime = std::chrono::steady_clock::now();
-        constexpr unsigned int TIMEOUT_MS = 10000;  // 10 s timeout
+        constexpr unsigned int TIMEOUT_MS = 5000;  // 5s timeout
         unsigned int remaining = size;
 
         while (remaining > 0) {
@@ -356,7 +454,6 @@ public:
                 std::chrono::steady_clock::now() - startTime).count();
 
             if (elapsed > TIMEOUT_MS) {
-                std::cerr << "Receive timeout after " << elapsed << "ms" << std::endl;
                 return false;
             }
 
@@ -364,13 +461,6 @@ public:
             int received = ::recv(socket, buffer, remaining, 0);
 
             if (received <= 0) {
-                std::cerr << "Receive error: " <<
-#ifdef _MSC_VER
-                    WSAGetLastError()
-#else
-                    errno
-#endif
-                    << std::endl;
                 return false;
             }
 
@@ -392,7 +482,18 @@ public:
         std::string result;
         char buffer[4096];
         const auto startTime = std::chrono::steady_clock::now();
-        constexpr unsigned int TIMEOUT_MS = 10000;  // 10 second timeout
+        constexpr unsigned int TIMEOUT_MS = 120000;  // 120 second (2 minute) timeout
+        
+        // Set socket to non-blocking mode to handle disconnects better
+#ifdef _MSC_VER
+        u_long mode = 1;
+        ioctlsocket(socket, FIONBIO, &mode);
+#else
+        int flags_start = fcntl(socket, F_GETFL, 0);
+        if (flags_start >= 0) {
+            fcntl(socket, F_SETFL, flags_start | O_NONBLOCK);
+        }
+#endif
 
         while (true) {
             // Check timeout
@@ -406,11 +507,31 @@ public:
                 return "";  // Nothing received, report error
             }
 
+            // Small sleep to reduce CPU usage during polling
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            
             // Receive chunk of data
             int received = ::recv(socket, buffer, sizeof(buffer) - 1, 0);
-
-            if (received <= 0) {
+            
+            if (received < 0) {
+                // Check if it's just a would-block error (no data available)
+#ifdef _MSC_VER
+                if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                    continue;  // No data available yet, keep waiting
+                }
+#else
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    continue;  // No data available yet, keep waiting
+                }
+#endif
+                // Real error occurred
                 break;
+            } else if (received == 0) {
+                // Connection closed by peer
+                if (!result.empty()) {
+                    break;  // Return what we've got so far
+                }
+                return "";  // Connection closed without data
             }
 
             // Null-terminate and append to result
@@ -423,6 +544,17 @@ public:
             }
         }
 
+        // Set socket back to blocking mode
+#ifdef _MSC_VER
+        u_long mode = 0;
+        ioctlsocket(socket, FIONBIO, &mode);
+#else
+        int flags_end = fcntl(socket, F_GETFL, 0);
+        if (flags_end >= 0) {
+            fcntl(socket, F_SETFL, flags_end & ~O_NONBLOCK);
+        }
+#endif
+
         return result;
     }
 };
@@ -433,11 +565,11 @@ public:
  */
 
  /**
-  * Extract a string value for a key from a JSON object
+  * Extract a value (string or numeric) for a key from a JSON object
   *
   * @param json The JSON string to parse
   * @param key The key to look for (without quotes)
-  * @return The string value, or empty string if not found
+  * @return The value as string, or empty string if not found
   */
 std::string getJsonValue(const std::string& json, const std::string& key) {
     // Format key with quotes for searching
@@ -455,29 +587,51 @@ std::string getJsonValue(const std::string& json, const std::string& key) {
         return "";
     }
 
-    // Find the opening quote of the value
-    size_t valueStartPos = json.find("\"", colonPos);
-    if (valueStartPos == std::string::npos) {
+    // Skip whitespace after colon
+    size_t valueStartPos = colonPos + 1;
+    while (valueStartPos < json.length() && isspace(json[valueStartPos])) {
+        valueStartPos++;
+    }
+    
+    if (valueStartPos >= json.length()) {
         return "";
     }
 
-    // Find the closing quote of the value
-    size_t valueEndPos = json.find("\"", valueStartPos + 1);
-    if (valueEndPos == std::string::npos) {
-        return "";
+    // Check if value is a string (starts with quote)
+    if (json[valueStartPos] == '\"') {
+        // Find the closing quote of the string value
+        size_t valueEndPos = json.find("\"", valueStartPos + 1);
+        if (valueEndPos == std::string::npos) {
+            return "";
+        }
+        
+        // Extract and return the string value
+        return json.substr(valueStartPos + 1, valueEndPos - valueStartPos - 1);
+    } 
+    // Check if value is a number or other non-string value
+    else {
+        // Find the end of the value (comma, closing brace, bracket, or whitespace)
+        size_t valueEndPos = valueStartPos;
+        while (valueEndPos < json.length() && 
+               json[valueEndPos] != ',' && 
+               json[valueEndPos] != '}' && 
+               json[valueEndPos] != ']' && 
+               !isspace(json[valueEndPos])) {
+            valueEndPos++;
+        }
+        
+        // Extract and return the value
+        return json.substr(valueStartPos, valueEndPos - valueStartPos);
     }
-
-    // Extract and return the value
-    return json.substr(valueStartPos + 1, valueEndPos - valueStartPos - 1);
 }
 
 /**
- * Extract a string value from a nested JSON object
+ * Extract a value (string or numeric) from a nested JSON object
  *
  * @param json The JSON string to parse
  * @param parent The parent object key
  * @param key The key within the parent object
- * @return The string value, or empty string if not found
+ * @return The value as string, or empty string if not found
  */
 std::string getJsonValueNested(const std::string& json, const std::string& parent, const std::string& key) {
     // Format parent key with quotes for searching
@@ -535,34 +689,199 @@ void hexToBin(const std::string& hex, unsigned char* bin, size_t binSize) {
     }
 }
 
-/**
- * Print binary data as formatted hexadecimal - only when necessary
- *
- * @param label Label to print before the data
- * @param data Pointer to the binary data
- * @param size Size of the data in bytes
- */
-void printHex(const char* label, const unsigned char* data, size_t size) {
-    std::cout << label << ": ";
-
-    for (size_t i = 0; i < size; i++) {
-        printf("%02x", data[i]);
+// Thread pool for parallel solution submission
+class ThreadPool {
+public:
+    ThreadPool(size_t threads) : stop(false) {
+        for (size_t i = 0; i < threads; ++i) {
+            workers.emplace_back([this] {
+                while (true) {
+                    std::function<void()> task;
+                    {
+                        std::unique_lock<std::mutex> lock(this->queueMutex);
+                        this->condition.wait(lock, [this] { 
+                            return this->stop || !this->tasks.empty(); 
+                        });
+                        
+                        if (this->stop && this->tasks.empty()) {
+                            return;
+                        }
+                        
+                        task = std::move(this->tasks.front());
+                        this->tasks.pop();
+                    }
+                    
+                    task();
+                }
+            });
+        }
     }
+    
+    template<class F>
+    void enqueue(F&& f) {
+        {
+            std::unique_lock<std::mutex> lock(queueMutex);
+            if (stop) {
+                throw std::runtime_error("enqueue on stopped ThreadPool");
+            }
+            tasks.emplace(std::forward<F>(f));
+        }
+        condition.notify_one();
+    }
+    
+    ~ThreadPool() {
+        {
+            std::unique_lock<std::mutex> lock(queueMutex);
+            stop = true;
+        }
+        condition.notify_all();
+        for (std::thread &worker : workers) {
+            worker.join();
+        }
+    }
+    
+private:
+    std::vector<std::thread> workers;
+    std::queue<std::function<void()>> tasks;
+    std::mutex queueMutex;
+    std::condition_variable condition;
+    bool stop;
+};
 
-    std::cout << std::endl;
+// Method to get best nodes by success rate
+std::vector<size_t> getBestNodeIndices(size_t count) {
+    std::lock_guard<std::mutex> lock(nodesMutex);
+    
+    // Create vector of indices
+    std::vector<size_t> indices(nodes.size());
+    for (size_t i = 0; i < nodes.size(); i++) {
+        indices[i] = i;
+    }
+    
+    // Sort indices by node success rate
+    std::sort(indices.begin(), indices.end(), [](size_t a, size_t b) {
+        return nodes[a].getSuccessRate() > nodes[b].getSuccessRate();
+    });
+    
+    // Return top N indices
+    if (count < indices.size()) {
+        indices.resize(count);
+    }
+    
+    return indices;
 }
 
 /**
- * Process a solution received from the local provider and send it to the Qubic node
+ * Send a solution to a specific node
+ *
+ * @param nodeIndex Index of the node in the nodes array
+ * @param message Pointer to the message to send
+ * @param messageSize Size of the message in bytes
+ * @param solutionTaskId Task ID of the solution (for logging)
+ * @param solutionCount Sequential number of this solution (for logging)
+ * @return true if submission was successful, false otherwise
+ */
+bool sendSolutionToNode(size_t nodeIndex, const char* message, size_t messageSize, 
+                        unsigned long long solutionTaskId, int solutionCount) {
+    // Lock for node access
+    std::lock_guard<std::mutex> lock(nodesMutex);
+    
+    // Get node info
+    NodeInfo& node = nodes[nodeIndex];
+    
+    // Skip inactive nodes
+    if (!node.active) {
+        return false;
+    }
+    
+    // Try to connect to the node
+    SocketClient nodeSocket;
+    if (!nodeSocket.connect(node.ip.c_str(), node.port)) {
+        // Connection failed
+        log("Node ", node.ip, ":", node.port, " connection failed");
+        return false;
+    }
+    
+    // Need to copy the message since send() takes a non-const pointer
+    char* messageCopy = new char[messageSize];
+    memcpy(messageCopy, message, messageSize);
+    
+    // Send the solution
+    bool success = nodeSocket.send(nodeSocket.sock, messageCopy, messageSize);
+    
+    // Free the message copy
+    delete[] messageCopy;
+    
+    if (!success) {
+        // Send failed
+        log("Failed to send solution to node ", node.ip, ":", node.port);
+        nodeSocket.closeSocket();
+        return false;
+    }
+    
+    // Solution sent successfully
+    log("Solution #", solutionCount, " (Task ", solutionTaskId, 
+        ") sent to ", node.ip, ":", node.port);
+    
+    nodeSocket.closeSocket();
+    return true;
+}
+
+/**
+ * Function for submitting a solution to nodes sequentially until one succeeds
+ *
+ * @param solution Pointer to the prepared solution message
+ * @param messageSize Size of the message in bytes
+ * @param solutionTaskId Task ID of the solution
+ * @param solutionCount Sequential number of the solution
+ */
+void submitSolutionToNodes(const char* message, size_t messageSize, 
+                          unsigned long long solutionTaskId, int solutionCount) {
+    // Get the best nodes to try (based on success rate)
+    std::vector<size_t> bestNodes = getBestNodeIndices(5);
+    
+    // Try nodes in order of success rate until one succeeds
+    bool submissionSuccess = false;
+    
+    for (size_t i = 0; i < bestNodes.size() && !submissionSuccess; i++) {
+        size_t nodeIndex = bestNodes[i];
+        bool success = sendSolutionToNode(nodeIndex, message, messageSize, 
+                                         solutionTaskId, solutionCount);
+        
+        if (success) {
+            // Update node statistics (inside a lock)
+            {
+                std::lock_guard<std::mutex> lock(nodesMutex);
+                nodes[nodeIndex].successCount++;
+            }
+            submissionSuccess = true;
+        } else {
+            // Update node statistics (inside a lock)
+            {
+                std::lock_guard<std::mutex> lock(nodesMutex);
+                nodes[nodeIndex].failureCount++;
+            }
+        }
+    }
+    
+    // Log overall status
+    if (submissionSuccess) {
+        log("Solution #", solutionCount, " (Task ", solutionTaskId, ") submitted successfully");
+    } else {
+        log("Solution #", solutionCount, " (Task ", solutionTaskId, ") submission FAILED to all tried nodes");
+    }
+}
+
+/**
+ * Process a solution received from the local provider and send it to multiple Qubic nodes
  *
  * @param jsonLine JSON string containing the solution data
  * @param signingSubseed Subseed for signing the solution
  * @param signingPublicKey Public key corresponding to the subseed
  * @param destinationPublicKey Target public key (for direct messages) or nullptr (for broadcast)
  * @param sendingDirectly Whether to send directly to a specific public key (true) or broadcast (false)
- * @param nodeIp IP address of the Qubic node
- * @param nodePort Port number of the Qubic node
  * @param solutionCount Sequential number of this solution (for logging)
+ * @param threadPool ThreadPool for parallel submissions
  * @return true if processing and sending succeeded, false otherwise
  */
 bool processSolution(const std::string& jsonLine,
@@ -570,18 +889,23 @@ bool processSolution(const std::string& jsonLine,
     unsigned char* signingPublicKey,
     unsigned char* destinationPublicKey,
     bool sendingDirectly,
-    const char* nodeIp,
-    int nodePort,
-    int solutionCount) {
+    int solutionCount,
+    ThreadPool& threadPool) {
     try {
         // Extract required fields from JSON
         std::string task_id = getJsonValue(jsonLine, "task_id");
         std::string nonce = getJsonValueNested(jsonLine, "params", "nonce");
         std::string result = getJsonValueNested(jsonLine, "params", "result");
+        
+        // Extract the new fields
+        std::string firstComputorIndex = getJsonValue(jsonLine, "first_computor_index");
+        std::string lastComputorIndex = getJsonValue(jsonLine, "last_computor_index");
 
         // Validate required fields
-        if (task_id.empty() || nonce.empty() || result.empty()) {
-            std::cerr << "Error: Missing required fields in JSON data" << std::endl;
+        if (task_id.empty() || nonce.empty() || result.empty() || 
+            firstComputorIndex.empty() || lastComputorIndex.empty()) {
+            log("Error: Missing required fields in JSON data");
+            log("Received JSON: ", jsonLine);
             return false;
         }
 
@@ -602,6 +926,10 @@ bool processSolution(const std::string& jsonLine,
 
         // Set task index from task_id
         solution.taskIndex = std::stoull(task_id);
+        
+        // Set computor indices
+        solution.firstComputorIndex = static_cast<unsigned short>(std::stoi(firstComputorIndex));
+        solution.lastComputorIndex = static_cast<unsigned short>(std::stoi(lastComputorIndex));
 
         // FIX: Handle byte order for nonce conversion
         // First convert hex string to unsigned long
@@ -617,11 +945,10 @@ bool processSolution(const std::string& jsonLine,
         solution.nonce = nonce_network;
 
         // Log simplified output
-        std::cout << "Solution #" << solutionCount << " - Task: " << solution.taskIndex
-            << ", Nonce: 0x" << std::hex << nonce_host << std::dec << std::endl;
-
-        // Set padding field to zero (reserved for future use)
-        solution.padding = 0;
+        log("Solution #", solutionCount, " - Task: ", solution.taskIndex,
+            ", Nonce: 0x", std::hex, nonce_host, std::dec, 
+            ", Computor range: ", solution.firstComputorIndex, 
+            "-", solution.lastComputorIndex);
 
         // Set result hash from hex string
         hexToBin(result, solution.result, sizeof(solution.result));
@@ -650,7 +977,7 @@ bool processSolution(const std::string& jsonLine,
             attempts++;
         } while (gammingKey[0] != MESSAGE_TYPE_SOLUTION);
 
-        std::cout << "Found valid gamming nonce after " << attempts << " attempts" << std::endl;
+        log("Found valid gamming nonce after ", attempts, " attempts");
 
         // Sign the solution
         uint8_t digest[32] = { 0 };
@@ -670,39 +997,41 @@ bool processSolution(const std::string& jsonLine,
         struct CompleteMessage {
             RequestResponseHeader header;
             Solution payload;
-        } message;
-
-        // Initialize message structure
-        memset(&message, 0, sizeof(CompleteMessage));
+        };
+        
+        // Allocate and initialize message structure in heap (will be freed by the thread)
+        CompleteMessage* messagePtr = new CompleteMessage();
+        memset(messagePtr, 0, sizeof(CompleteMessage));
 
         // Set header fields
-        message.header.setType(BROADCAST_MESSAGE);
-        message.header.setSize(sizeof(CompleteMessage));
-        message.header.setDejavu(0);
+        messagePtr->header.setType(BROADCAST_MESSAGE);
+        messagePtr->header.setSize(sizeof(CompleteMessage));
+        messagePtr->header.setDejavu(0);
 
         // Copy solution to payload
-        message.payload = solution;
+        messagePtr->payload = solution;
 
-        // Send message to node
-        SocketClient nodeSocket;
-        if (nodeSocket.connect(nodeIp, nodePort)) {
-            if (nodeSocket.send(nodeSocket.sock, reinterpret_cast<char*>(&message), sizeof(CompleteMessage))) {
-                std::cout << "Solution sent to " << nodeIp << ":" << nodePort << std::endl;
-                nodeSocket.closeSocket();
-                return true;
-            }
-            else {
-                std::cerr << "Failed to send solution to node" << std::endl;
-            }
+        // Store important values for the thread
+        unsigned long long taskId = solution.taskIndex;
+        
+        // Submit the solution to nodes in a separate thread
+        threadPool.enqueue([messagePtr, taskId, solutionCount]() {
+            // Send the solution
+            submitSolutionToNodes(
+                reinterpret_cast<const char*>(messagePtr),
+                sizeof(CompleteMessage),
+                taskId,
+                solutionCount
+            );
+            
+            // Free the message memory
+            delete messagePtr;
+        });
 
-            nodeSocket.closeSocket();
-        }
-        else {
-            std::cerr << "Failed to connect to node at " << nodeIp << ":" << nodePort << std::endl;
-        }
+        return true;
     }
     catch (const std::exception& e) {
-        std::cerr << "Error processing solution: " << e.what() << std::endl;
+        log("Error processing solution: ", e.what());
     }
 
     return false;
@@ -712,25 +1041,17 @@ bool processSolution(const std::string& jsonLine,
  * Main entry point for the application
  */
 int main(int argc, char* argv[]) {
-    // Validate command-line arguments
-    if (argc < 3) {
-        std::cerr << "Usage: Sender <Node IP> <Node Port>" << std::endl;
-        return EXIT_FAILURE;
+    // Optional command-line arguments for additional nodes
+    // (Note: This won't actually add nodes to our fixed-size array, but we'll keep the code for reference)
+    if (argc > 1) {
+        std::cout << "Additional node arguments will be ignored as predefined nodes are used." << std::endl;
     }
 
     // Configuration
     const char* solutionProviderIp = "127.0.0.1";  // Local solution provider
     int solutionProviderPort = 8766;               // Default port
-    const char* nodeIp = argv[1];                  // Qubic node IP from args
-    int nodePort = std::atoi(argv[2]);             // Qubic node port from args
-
-    // Determine if we're sending directly to a specific target
-    bool sendingDirectly = (argc >= 4);
-    const char* targetPubKeyHex = nullptr;
-
-    if (sendingDirectly) {
-        targetPubKeyHex = argv[3];
-    }
+    bool sendingDirectly = false;                  // Broadcasting by default
+    unsigned char targetPublicKey[32] = { 0 };     // Empty target key
 
     // Set up signal handler for clean shutdown
     setupSignalHandler();
@@ -745,15 +1066,12 @@ int main(int argc, char* argv[]) {
     getPrivateKeyFromSubSeed(signingSubseed, signingPrivateKey);
     getPublicKeyFromPrivateKey(signingPrivateKey, signingPublicKey);
 
-    // Initialize target public key if sending directly
-    unsigned char targetPublicKey[32] = { 0 };
-
-    if (sendingDirectly) {
-        // Convert hex string to binary
-        hexToBin(targetPubKeyHex, targetPublicKey, 32);
-    }
+    // Create thread pool for parallel submissions
+    ThreadPool threadPool(MAX_PARALLEL_SUBMISSIONS);
 
     // Connect to local solution provider
+    std::cout << "Starting parallelized solution sender..." << std::endl;
+    std::cout << "Using " << nodes.size() << " nodes for submission" << std::endl;
     std::cout << "Connecting to solution provider at "
         << solutionProviderIp << ":" << solutionProviderPort << std::endl;
 
@@ -768,6 +1086,7 @@ int main(int argc, char* argv[]) {
     // Main processing loop
     std::string buffer;          // Buffer for incoming data
     int solutionCount = 0;       // Counter for received solutions
+    int reconnectDelaySeconds = 10; // Delay between reconnection attempts
 
     while (!state) {  // Run until signal handler sets state != 0
         // Receive data from solution provider
@@ -775,15 +1094,21 @@ int main(int argc, char* argv[]) {
 
         // Handle connection loss
         if (data.empty()) {
-            std::cout << "Connection lost. Reconnecting..." << std::endl;
+            std::cout << "Connection lost. Reconnecting in " << reconnectDelaySeconds << " seconds..." << std::endl;
             solutionClient.closeSocket();
 
+            // Wait before reconnecting
+            std::this_thread::sleep_for(std::chrono::seconds(reconnectDelaySeconds));
+            
             // Try to reconnect
             if (!solutionClient.connect(solutionProviderIp, solutionProviderPort)) {
-                std::this_thread::sleep_for(std::chrono::seconds(5));
+                std::cout << "Reconnection failed. Trying again in " << reconnectDelaySeconds << " seconds..." << std::endl;
                 continue;
             }
-            std::cout << "Reconnected" << std::endl;
+            std::cout << "Reconnected. Listening for solutions..." << std::endl;
+            
+            // Clear any partial data
+            buffer.clear();
             continue;
         }
 
@@ -813,9 +1138,8 @@ int main(int argc, char* argv[]) {
                 signingPublicKey,
                 targetPublicKey,
                 sendingDirectly,
-                nodeIp,
-                nodePort,
-                solutionCount
+                solutionCount,
+                threadPool
             );
 
             if (!success) {
