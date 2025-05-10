@@ -15,6 +15,8 @@
 #include <vector>
 #include <string>
 #include <sys/types.h>
+#include <ctime>
+#include <cstdlib>
 
 // TCP server includes
 #ifdef _WIN32
@@ -44,17 +46,11 @@ uint8_t dispatcherPubkey[32] = { 0 };
 bool shouldExit = false;
 uint64_t prevTask = 0;
 
-// New variables for reconnection feature
-std::mutex lastTaskTimeMutex;
-std::chrono::time_point<std::chrono::system_clock> lastTaskTime;
-std::atomic<bool> forceReconnect(false);
-std::atomic<int> reconnectingThreads(0);
-int totalPeerThreads = 0;  // Will be set in run() to argc-1
-
-// New variable to track the last reconnection time
-std::chrono::time_point<std::chrono::system_clock> lastReconnectTime;
-std::mutex lastReconnectTimeMutex;
-const int RECONNECT_COOLDOWN_SECONDS = 120; // 2 minutes cooldown
+// Global variables for task monitoring
+std::atomic<uint64_t> lastTaskTimestamp;
+const uint64_t INACTIVITY_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes in milliseconds
+static char** savedArgv;
+static int savedArgc;
 
 struct task
 {
@@ -106,54 +102,69 @@ std::atomic<int> nPeer;
 std::vector<socket_t> clientSockets;
 std::mutex clientSocketsMutex;
 
-// Monitor thread function to detect task reception timeouts
-void monitorTaskReception() {
-    // Initialize lastTaskTime
-    {
-        std::lock_guard<std::mutex> lock(lastTaskTimeMutex);
-        lastTaskTime = std::chrono::system_clock::now();
-    }
+// Function to monitor task activity and restart if inactive
+void monitorTaskActivity() {
+    printf("Starting task activity monitor thread\n");
     
-    // Initialize lastReconnectTime
-    {
-        std::lock_guard<std::mutex> lock(lastReconnectTimeMutex);
-        lastReconnectTime = std::chrono::system_clock::now();
-    }
+    // Give the program some time to initialize and receive the first task
+    SLEEP(30000); // Wait 30 seconds before starting to monitor
     
     while (!shouldExit) {
-        bool shouldForceReconnect = false;
+        auto now = std::chrono::system_clock::now();
+        auto duration = now.time_since_epoch();
+        auto currentTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
         
-        {
-            std::lock_guard<std::mutex> lock(lastTaskTimeMutex);
-            auto now = std::chrono::system_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastTaskTime).count();
+        uint64_t lastTask = lastTaskTimestamp.load();
+        if (lastTask > 0) { // Only check if we've received at least one task
+            uint64_t elapsed = currentTimeMs - lastTask;
             
-            // Check if we're in cooldown period after reconnection
-            std::chrono::time_point<std::chrono::system_clock> reconnectTime;
-            {
-                std::lock_guard<std::mutex> reconnectLock(lastReconnectTimeMutex);
-                reconnectTime = lastReconnectTime;
-            }
-            auto timeSinceReconnect = std::chrono::duration_cast<std::chrono::seconds>(now - reconnectTime).count();
-            
-            // Only force reconnection if we're not in cooldown period and no tasks received for 60+ seconds
-            if (elapsed > 60 && !forceReconnect.load() && timeSinceReconnect > RECONNECT_COOLDOWN_SECONDS) {
-                printf("WARNING: No tasks received for %ld seconds. Forcing reconnection to all peers.\n", elapsed);
-                shouldForceReconnect = true;
+            if (elapsed > INACTIVITY_THRESHOLD_MS) {
+                printf("WARNING: No tasks received for %lu ms (threshold: %lu ms). Restarting program...\n", 
+                       (unsigned long)elapsed, (unsigned long)INACTIVITY_THRESHOLD_MS);
                 
-                // Update the last reconnect time
-                std::lock_guard<std::mutex> reconnectLock(lastReconnectTimeMutex);
-                lastReconnectTime = now;
+                // Set exit flag to stop all threads
+                shouldExit = true;
+                
+                // Wait a little to allow threads to clean up
+                SLEEP(2000);
+                
+                // Restart the program with the same arguments
+                #ifdef _WIN32
+                // Windows restart using CreateProcess
+                STARTUPINFO si;
+                PROCESS_INFORMATION pi;
+                ZeroMemory(&si, sizeof(si));
+                si.cb = sizeof(si);
+                ZeroMemory(&pi, sizeof(pi));
+                
+                // Create command line
+                char cmdLine[2048] = {0};
+                for (int i = 0; i < savedArgc; i++) {
+                    strcat(cmdLine, savedArgv[i]);
+                    if (i < savedArgc - 1) strcat(cmdLine, " ");
+                }
+                
+                if (!CreateProcess(NULL, cmdLine, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+                    printf("Failed to restart program with CreateProcess. Error: %d\n", GetLastError());
+                }
+                else {
+                    // Close process and thread handles
+                    CloseHandle(pi.hProcess);
+                    CloseHandle(pi.hThread);
+                }
+                #else
+                // Unix restart using execv
+                execv(savedArgv[0], savedArgv);
+                #endif
+                
+                // If restart fails, exit with error
+                printf("Failed to restart program. Exiting.\n");
+                exit(1);
             }
         }
         
-        if (shouldForceReconnect) {
-            forceReconnect.store(true);
-            reconnectingThreads.store(totalPeerThreads);
-        }
-        
-        // Check every 5 seconds
-        SLEEP(5000);
+        // Check every 10 seconds
+        SLEEP(10000);
     }
 }
 
@@ -389,51 +400,24 @@ void listenerThread(char* nodeIp)
 {
     QCPtr qc;
     bool needReconnect = true;
-    bool wasForceReconnected = false;
     std::string log_header = "[" + std::string(nodeIp) + "]: ";
     while (!shouldExit)
     {
         try {
-            // Check if we need to force reconnection
-            if (forceReconnect.load() && !wasForceReconnected) {
-                printf("%sForcing reconnection due to task timeout\n", log_header.c_str());
-                needReconnect = true;
-                wasForceReconnected = true;
-            }
-            
             if (needReconnect) {
-                // Only increment peer count if this is not a forced reconnection
-                if (!wasForceReconnected) {
-                    nPeer.fetch_add(1);
-                }
-                
                 needReconnect = false;
+                nPeer.fetch_add(1);
                 qc = make_qc(nodeIp, PORT);
                 qc->exchangePeer();// do the handshake stuff
-                
-                // If this was a forced reconnection
-                if (wasForceReconnected) {
-                    int remaining = reconnectingThreads.fetch_sub(1) - 1;
-                    
-                    // If this was the last thread to reconnect, reset the force flag
-                    if (remaining == 0) {
-                        forceReconnect.store(false);
-                        printf("All peers have been reconnected. Waiting for new tasks...\n");
-                    }
-                    
-                    wasForceReconnected = false;
-                }
+                // TODO: connect to received peers
             }
-            
             auto header = qc->receiveHeader();
             std::vector<uint8_t> buff;
             uint32_t sz = header.size();
             if (sz > 0xFFFFFF)
             {
                 needReconnect = true;
-                if (!wasForceReconnected) {
-                    nPeer.fetch_add(-1);
-                }
+                nPeer.fetch_add(-1);
                 continue;
             }
             sz -= sizeof(RequestResponseHeader);
@@ -495,9 +479,11 @@ void listenerThread(char* nodeIp)
                         {
                             currentTask = *tk;
                             
-                            // Update the last task time whenever a new task is received
-                            std::lock_guard<std::mutex> timelock(lastTaskTimeMutex);
-                            lastTaskTime = std::chrono::system_clock::now();
+                            // Update last task timestamp when we receive a new task
+                            auto now = std::chrono::system_clock::now();
+                            auto duration = now.time_since_epoch();
+                            auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+                            lastTaskTimestamp.store(milliseconds);
                         }
                         else
                         {
@@ -589,10 +575,7 @@ void listenerThread(char* nodeIp)
         }
         catch (std::logic_error& ex) {
             needReconnect = true;
-            if (!wasForceReconnected) {
-                nPeer.fetch_add(-1);
-            }
-            wasForceReconnected = false;
+            nPeer.fetch_add(-1);
             SLEEP(1000);
         }
     }
@@ -600,20 +583,17 @@ void listenerThread(char* nodeIp)
 
 int run(int argc, char* argv[]) {
     if (argc == 1) {
-        printf("./listener [nodeip0] [nodeip1] ... [nodeipN]\n");
+        printf("./oc_verifier [nodeip0] [nodeip1] ... [nodeipN]\n");
         return 0;
     }
     getPublicKeyFromIdentity(DISPATCHER, dispatcherPubkey);
-    
-    // Set the total number of peer threads
-    totalPeerThreads = argc - 1;
 
     // Start TCP server thread for JSON broadcasting
     std::thread tcpServer(tcpServerThread);
-    
-    // Start monitor thread to check for task timeouts
-    std::thread monitorThread(monitorTaskReception);
 
+    // Start task monitoring thread
+    std::thread monitorThread(monitorTaskActivity);
+    
     std::vector<std::thread> thr;
     for (int i = 0; i < argc - 1; i++)
     {
@@ -632,9 +612,13 @@ int run(int argc, char* argv[]) {
         SLEEP(10000);
     }
 
-    // Wait for all threads to exit
+    // Wait for TCP server thread to exit
     tcpServer.join();
-    monitorThread.join();  // Wait for monitor thread
+    
+    // Wait for monitor thread
+    if (monitorThread.joinable()) {
+        monitorThread.join();
+    }
 
     for (auto& t : thr) {
         if (t.joinable()) {
@@ -652,10 +636,16 @@ int run(int argc, char* argv[]) {
 }
 
 int main(int argc, char* argv[]) {
+    // Save arguments for potential restart
+    savedArgv = argv;
+    savedArgc = argc;
+    
     gStale = 0;
     gInValid = 0;
     gValid = 0;
     nPeer = 0;
+    lastTaskTimestamp = 0; // Initialize the timestamp
+    
     try {
         return run(argc, argv);
     }
