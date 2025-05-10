@@ -63,10 +63,10 @@ const CONFIG = {
   logLevels: {
     error: true,    // Always log errors
     warn: true,     // Always log warnings
-    info: true,     // Basic information
+    info: true,     // Basic information (startup, connections, etc.)
     debug: false,   // Only enable when debugging issues
-    share: false,   // Individual share logging
-    job: true,      // New job notifications 
+    share: false,   // Individual share logging (very spammy)
+    job: true,      // New job notifications (reduced verbosity)
   },
   
   // Thresholds for logs
@@ -80,7 +80,11 @@ const CONFIG = {
   // Performance settings
   aliasTableRefreshInterval: 300000, // 5 minutes
   maxRecentJobs: 5, // Keep track of last 5 jobs
-  pruneShareHistoryInterval: 30000 // 30 seconds
+  pruneShareHistoryInterval: 30000, // 30 seconds
+  
+  // Memory management settings
+  staleConnectionThreshold: 86400000, // 24 hours - time after which inactive miners are removed
+  cleanupInterval: 3600000, // 1 hour - how often to run the cleanup process
 };
 
 // Global state managed by StateManager
@@ -160,7 +164,9 @@ class StateManager extends EventEmitter {
       else if (job.job.first_computor_index >= 338 && job.job.first_computor_index <= 506) groupId = 3;
       else if (job.job.first_computor_index >= 507 && job.job.first_computor_index <= 675) groupId = 4;
       
-      logger('job', `Processing job for group ${groupId} with ${this.miners.size} miners`);
+      // Count active miners for more accurate logging
+      const activeMinerCount = Array.from(this.miners.values()).filter(m => m.connected).length;
+      logger('job', `Processing job for group ${groupId} with ${activeMinerCount} active miners (${this.miners.size} total)`);
       
       this.emit('broadcastJob', job);
     });
@@ -716,6 +722,35 @@ class StateManager extends EventEmitter {
     logger('info', `Computor distribution: G1:${groupCounts[0]} G2:${groupCounts[1]} G3:${groupCounts[2]} G4:${groupCounts[3]}`);
     return groupCounts;
   }
+  
+  // Method to clean up stale miners
+  cleanupStaleMiners() {
+    const now = Date.now();
+    const staleThreshold = CONFIG.staleConnectionThreshold;
+    let removedCount = 0;
+    
+    // Create a list of entries to remove (to avoid modifying during iteration)
+    const toRemove = [];
+    
+    this.miners.forEach((minerInfo, minerId) => {
+      // Check if miner has been disconnected for longer than the threshold
+      if (!minerInfo.connected && (now - minerInfo.lastActivity) > staleThreshold) {
+        toRemove.push(minerId);
+      }
+    });
+    
+    // Remove stale entries
+    for (const minerId of toRemove) {
+      this.miners.delete(minerId);
+      removedCount++;
+    }
+    
+    if (removedCount > 0) {
+      logger('info', `Cleaned up ${removedCount} stale miner connections, current total: ${this.miners.size}`);
+    }
+    
+    return removedCount;
+  }
 }
 
 // File I/O Helper
@@ -1159,6 +1194,7 @@ class MinerServer {
     
     if (minerInfo) {
       minerInfo.connected = false;
+      minerInfo.socket = null; // Remove socket reference to prevent memory leaks
       this.state.miners.set(minerId, minerInfo);
       
       if (minerInfo.workerKey) {
@@ -1623,6 +1659,7 @@ class MinerServer {
         } catch (error) {
           logger('error', `Error sending job to miner ${minerId}: ${error.message}`);
           minerInfo.connected = false;
+          minerInfo.socket = null; // Clear socket reference to prevent memory leaks
           this.state.miners.set(minerId, minerInfo);
         }
       }
@@ -2659,6 +2696,12 @@ class QubicStratumProxy {
     
     logger('info', `Qubic Stratum Proxy started successfully, optimized for 676 computors (0-675) in 4 groups`);
     logger('info', `Current computor distribution: G1:${groupCounts[0]} G2:${groupCounts[1]} G3:${groupCounts[2]} G4:${groupCounts[3]}`);
+    
+    // Run an initial cleanup to remove any stale miners from previous runs
+    const removedCount = this.state.cleanupStaleMiners();
+    if (removedCount > 0) {
+      logger('info', `Initial cleanup removed ${removedCount} stale connections`);
+    }
   }
   
   setupIntervals() {
@@ -2693,6 +2736,9 @@ class QubicStratumProxy {
     
     // Health check
     setInterval(() => this.logHealthCheck(), CONFIG.logHealthInterval);
+    
+    // NEW: Clean up stale miner connections
+    setInterval(() => this.state.cleanupStaleMiners(), CONFIG.cleanupInterval);
   }
   
   checkInactiveMiners() {
@@ -2709,6 +2755,7 @@ class QubicStratumProxy {
           minerInfo.socket.end();
         }
         minerInfo.connected = false;
+        minerInfo.socket = null; // Clear socket reference to prevent memory leaks
         this.state.miners.set(minerId, minerInfo);
         inactiveCount++;
         
@@ -2740,6 +2787,13 @@ class QubicStratumProxy {
         logger('warn', `Circuit breaker for ${service} is ${breaker.state} with ${breaker.failures} failures`);
       }
     }
+    
+    // Log memory usage statistics
+    const memoryUsage = process.memoryUsage();
+    const formatMemory = (bytes) => `${Math.round(bytes / 1024 / 1024 * 100) / 100} MB`;
+    
+    logger('info', `Memory usage: RSS: ${formatMemory(memoryUsage.rss)}, Heap: ${formatMemory(memoryUsage.heapUsed)}/${formatMemory(memoryUsage.heapTotal)}`);
+    logger('info', `Miners in memory: ${this.state.miners.size} total, ${Array.from(this.state.miners.values()).filter(m => m.connected).length} active`);
   }
   
   handleShutdown() {
