@@ -19,7 +19,7 @@ const CONFIG = {
   statsPort: 8088,
   
   // Admin authentication
-  adminPassword: 'SecurePasswrd', // Change this to your preferred password
+  adminPassword: 'YourPasswrd', // Change this to your preferred password
   
   // Stat files
   statsPath: './stats.json',
@@ -54,10 +54,24 @@ const CONFIG = {
   bufferLimit: 1024 * 1024 * 1024, // 1GB FOR TESTING!! PRODUCTION USE 5MB (5 * 1024 * 1024)
   
   // Logging options
-  logStatInterval: 300000, // Log stats every 5 minutes
-  logHealthInterval: 300000, // Log health checks every 5 minutes
+  logStatInterval: 600000, // Log stats every 10 minutes (was 5 minutes)
+  logHealthInterval: 600000, // Log health checks every 10 minutes (was 5 minutes)
   logKeepalive: false, // Don't log keepalive messages
   logDetailedMinerEvents: false, // Don't log detailed miner events
+  
+  // Log levels (set to false to disable that category of logs)
+  logLevels: {
+    error: true,    // Always log errors
+    warn: true,     // Always log warnings
+    info: true,     // Basic information
+    debug: false,   // Only enable when debugging issues
+    share: false,   // Individual share logging
+    job: true,      // New job notifications 
+  },
+  
+  // Thresholds for logs
+  shareLogThreshold: 100,     // Only log share milestones (every X shares)
+  logMinersThreshold: 5,      // Only list top X miners in stats
   
   // Circuit breaker settings
   circuitBreakerThreshold: 10, // failures
@@ -976,7 +990,11 @@ class TaskSourceClient {
   handleMessage(message) {
     try {
       const startTime = Date.now();
-      logger('debug', `Received task type: ${message.method || 'Unknown'}`);
+      
+      // Only log task type in verbose mode
+      if (CONFIG.verbose) {
+        logger('debug', `Received task type: ${message.method || 'Unknown'}`);
+      }
       
       if (message.method === 'job') {
         if (message.job && message.job.job_id && message.job.job_id === this.state.lastJobId) {
@@ -999,7 +1017,7 @@ class TaskSourceClient {
         else if (message.job.first_computor_index >= 338 && message.job.first_computor_index <= 506) groupId = 3;
         else if (message.job.first_computor_index >= 507 && message.job.first_computor_index <= 675) groupId = 4;
         
-        logger('job', `New job: ${message.job.job_id}, height: ${message.job.height}, computor group: ${groupId} (range: ${message.job.first_computor_index}-${message.job.last_computor_index})`);
+        logger('job', `New job: ${message.job.job_id}, height: ${message.job.height}, group: ${groupId}`);
         
         // Check if we have any valid computors for this job - use cached results when possible
         const rangeKey = `${message.job.first_computor_index}-${message.job.last_computor_index}`;
@@ -1085,7 +1103,14 @@ class MinerServer {
       return;
     }
     
-    logger('info', `Miner connected: ${minerId}`);
+    // Only log connections if there are few miners 
+    // or if it's the first few connections
+    if (this.state.miners.size < 10 || CONFIG.verbose) {
+      logger('info', `Miner connected: ${minerId}`);
+    } else if (this.state.miners.size % 10 === 0) {
+      // Log every 10th connection to show activity without spam
+      logger('info', `Miner milestone: ${this.state.miners.size} total connections`);
+    }
     
     // Set login timeout
     const loginTimeout = setTimeout(() => {
@@ -1126,8 +1151,12 @@ class MinerServer {
   }
   
   handleMinerDisconnect(minerId) {
-    logger('info', `Miner disconnected: ${minerId}`);
+    // Only log disconnections if verbose or for important miners with shares
     const minerInfo = this.state.miners.get(minerId);
+    if (minerInfo && (CONFIG.verbose || minerInfo.shares > 0)) {
+      logger('info', `Miner disconnected: ${minerId}`);
+    }
+    
     if (minerInfo) {
       minerInfo.connected = false;
       this.state.miners.set(minerId, minerInfo);
@@ -1145,7 +1174,10 @@ class MinerServer {
   
   handleMinerMessage(minerId, message) {
     try {
-      logger('debug', `Received from ${minerId}: ${message.method}`);
+      // Only log non-keepalive messages when verbose is enabled
+      if (CONFIG.verbose && message.method !== 'keepalive' && message.method !== 'keepalived') {
+        logger('debug', `Received from ${minerId}: ${message.method}`);
+      }
       
       const minerInfo = this.state.miners.get(minerId);
       if (!minerInfo) return;
@@ -1415,7 +1447,12 @@ class MinerServer {
       logger('share', `Share for previous job: ${jobId} (current: ${this.state.currentJob.job.job_id})`);
     }
     
-    logger('share', `Miner ${minerId} (${minerInfo.wallet}) found a share! Total: ${workerStat ? workerStat.shares : minerInfo.shares}`);
+    // For shares, only log milestone numbers to reduce spam
+    if (workerStat && workerStat.shares % CONFIG.shareLogThreshold === 0) {
+      logger('share', `Miner ${minerId} (${minerInfo.wallet}) found a share! Total: ${workerStat.shares} (milestone)`);
+    } else if (CONFIG.verbose) {
+      logger('share', `Miner ${minerId} (${minerInfo.wallet}) found a share! Total: ${workerStat ? workerStat.shares : minerInfo.shares}`);
+    }
     
     this.sendShareResponse(minerId, message);
     
@@ -1591,8 +1628,13 @@ class MinerServer {
       }
     });
     
-    // CHANGE #3.2: Improved logging for task broadcast decisions
-    logger('job', `Job for group ${jobGroup} broadcast to ${activeMiners} miners, skipped ${skippedMiners} miners. Distribution: G1:${workersByGroup[0]} G2:${workersByGroup[1]} G3:${workersByGroup[2]} G4:${workersByGroup[3]}`);
+    // SIMPLIFIED logging for task broadcast
+    logger('job', `Job for group ${jobGroup} broadcast to ${activeMiners} miners (${skippedMiners} skipped)`);
+    
+    // Only log worker distribution in debug mode
+    if (CONFIG.verbose) {
+      logger('debug', `Worker distribution: G1:${workersByGroup[0]} G2:${workersByGroup[1]} G3:${workersByGroup[2]} G4:${workersByGroup[3]}`);
+    }
   }
 }
 
@@ -1667,9 +1709,9 @@ class ShareDistributionServer {
       }
     }
     
-    logger('debug', `Share distributed to ${distributedTo} clients`);
-    
+    // Only log distribution details if verbose
     if (CONFIG.verbose) {
+      logger('debug', `Share distributed to ${distributedTo} clients`);
       logger('debug', `Share distribution details: task_id: ${message.task_id}, hash: ${message.task_seed_hash}, computor range: ${message.first_computor_index}-${message.last_computor_index}`);
     }
     
@@ -2095,61 +2137,36 @@ class StatisticsManager {
   logPeriodicStats() {
     const stats = this.generateStats();
     
-    logger('info', '--- Mining Stats ---');
+    logger('info', '=== Mining Status ===');
     logger('info', `Shares: ${stats.totalShares} | Hashrate: ${stats.totalHashrateFormatted}`);
-    logger('info', `Miners: ${stats.minerCount.active}/${stats.minerCount.total} | Configured Computors: ${stats.computorDistribution.length}`);
+    logger('info', `Active Miners: ${stats.minerCount.active}/${stats.minerCount.total} | Computors: ${stats.computorDistribution.length}`);
     
-    // Log stats by computor group
-    logger('info', `Computor Groups: G1(0-168):${stats.computorGroups[0].count} G2(169-337):${stats.computorGroups[1].count} G3(338-506):${stats.computorGroups[2].count} G4(507-675):${stats.computorGroups[3].count}`);
-    
-    // Log task processing stats
+    // Log task processing summary only
     if (stats.taskStats) {
       logger('info', `Tasks: Processed: ${stats.taskStats.processed} | Mined: ${stats.taskStats.mined} | Skipped: ${stats.taskStats.skipped}`);
-      
-      // Log tasks by group
-      if (stats.taskStats.byGroup && stats.taskStats.byGroup.length === 4) {
-        logger('info', `Tasks by Group: G1:${stats.taskStats.byGroup[0]} G2:${stats.taskStats.byGroup[1]} G3:${stats.taskStats.byGroup[2]} G4:${stats.taskStats.byGroup[3]}`);
-      }
-      
-      if (stats.taskStats.avgProcessingTime) {
-        logger('info', `Avg. Task Processing: ${stats.taskStats.avgProcessingTime.toFixed(2)} ms`);
-      }
     }
     
-    // Count workers by group
+    // Count workers by group, but make this output more compact
     const workersByGroup = [0, 0, 0, 0];
-    
     stats.workers.forEach(worker => {
       if (worker.preferredGroup > 0 && worker.preferredGroup <= 4) {
         workersByGroup[worker.preferredGroup - 1]++;
       }
     });
     
-    logger('info', `Workers by preferred group: G1:${workersByGroup[0]} G2:${workersByGroup[1]} G3:${workersByGroup[2]} G4:${workersByGroup[3]}`);
-    logger('info', `Group switch cooldown: ${this.state.groupSwitchCooldown/1000} seconds`);
+    logger('info', `Workers by group: [${workersByGroup.join(', ')}] | Cooldown: ${this.state.groupSwitchCooldown/1000}s`);
     
+    // Only show top workers up to the threshold
     const activeWorkers = stats.workers.filter(w => w.active && w.shares > 0);
-    if (activeWorkers.length > 0 && activeWorkers.length <= 5) {
-      // Only show details for 5 or fewer workers to avoid log spam
-      logger('info', 'Active Workers:');
-      activeWorkers.forEach(worker => {
+    const topWorkers = activeWorkers.slice(0, CONFIG.logMinersThreshold);
+    
+    if (topWorkers.length > 0) {
+      logger('info', `Top ${Math.min(CONFIG.logMinersThreshold, activeWorkers.length)} workers (of ${activeWorkers.length} total):`);
+      topWorkers.forEach(worker => {
         const computorId = this.state.minerComputorAssignments.get(worker.workerKey) || 'None';
         const groupId = worker.computorGroup || 'None';
-        const prefGroup = worker.preferredGroup || 'Any';
-        logger('info', `  ${worker.workerKey}: ${worker.shares} shares, ${worker.hashrateFormatted}, Computor: ${computorId} (Group ${groupId}, Pref: ${prefGroup})`);
+        logger('info', `  ${worker.workerKey}: ${worker.shares} shares, ${worker.hashrateFormatted}, Computor: ${computorId} (G${groupId})`);
       });
-    } else if (activeWorkers.length > 5) {
-      // Just show the top 3 workers if there are many
-      logger('info', `Active Workers: ${activeWorkers.length} total`);
-      activeWorkers.slice(0, 3).forEach(worker => {
-        const computorId = this.state.minerComputorAssignments.get(worker.workerKey) || 'None';
-        const groupId = worker.computorGroup || 'None';
-        const prefGroup = worker.preferredGroup || 'Any';
-        logger('info', `  ${worker.workerKey}: ${worker.shares} shares, ${worker.hashrateFormatted}, Computor: ${computorId} (Group ${groupId}, Pref: ${prefGroup})`);
-      });
-      logger('info', `  ...and ${activeWorkers.length - 3} more`);
-    } else {
-      logger('info', '  No active workers with shares');
     }
   }
 }
@@ -2263,7 +2280,9 @@ class HttpServer {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(stats, null, 2));
       
-      logger('debug', `Stats served to ${req.socket.remoteAddress}`);
+      if (CONFIG.verbose) {
+        logger('debug', `Stats served to ${req.socket.remoteAddress}`);
+      }
     } 
     else if (req.url === '/computor-list') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2682,7 +2701,10 @@ class QubicStratumProxy {
     
     this.state.miners.forEach((minerInfo, minerId) => {
       if (minerInfo.connected && (now - minerInfo.lastActivity) > CONFIG.keepaliveTimeout) {
-        logger('debug', `Disconnecting inactive miner ${minerId} (inactive for ${Math.round((now - minerInfo.lastActivity) / 1000)}s)`);
+        if (CONFIG.verbose) {
+          logger('debug', `Disconnecting inactive miner ${minerId} (inactive for ${Math.round((now - minerInfo.lastActivity) / 1000)}s)`);
+        }
+        
         if (minerInfo.socket) {
           minerInfo.socket.end();
         }
@@ -2707,12 +2729,12 @@ class QubicStratumProxy {
   }
   
   logHealthCheck() {
+    // Only log health if there are no connections (to show the service is alive)
     if (this.state.miners.size === 0 && this.shareServer.clients.size === 0) {
-      logger('info', `Waiting for connections on miner port ${CONFIG.minerPort}, dashboard port ${CONFIG.statsPort}`);
-      logger('info', `Configured with ${this.state.computorDistribution.length} computors for epoch ${this.state.currentEpoch}`);
+      logger('info', `Waiting for connections: miners=${CONFIG.minerPort}, dashboard=${CONFIG.statsPort}, computors=${this.state.computorDistribution.length}`);
     }
     
-    // Log circuit breaker status
+    // Log only non-healthy circuit breakers
     for (const [service, breaker] of this.state.circuitBreakers.entries()) {
       if (breaker.state !== 'CLOSED') {
         logger('warn', `Circuit breaker for ${service} is ${breaker.state} with ${breaker.failures} failures`);
@@ -2731,8 +2753,13 @@ class QubicStratumProxy {
   }
 }
 
-// Utility functions
+// Improved logger function
 function logger(level, message) {
+  // Check if this log level is enabled in config
+  if (!CONFIG.logLevels[level]) {
+    return; // Skip logging for disabled levels
+  }
+  
   const timestamp = new Date().toISOString();
   
   switch(level) {
@@ -2751,9 +2778,24 @@ function logger(level, message) {
       }
       break;
     case 'share':
-      console.log(`[${timestamp}] [SHARE] ${message}`);
+      // For shares, only log milestone numbers to reduce spam
+      if (message.includes("found a share") && !message.includes("milestone")) {
+        // Extract the total from messages like "Miner x.x.x.x found a share! Total: 42"
+        const match = message.match(/Total: (\d+)/);
+        if (match && match[1]) {
+          const total = parseInt(match[1]);
+          // Only log if it's a milestone (divisible by threshold)
+          if (total % CONFIG.shareLogThreshold === 0) {
+            console.log(`[${timestamp}] [SHARE] ${message} (milestone)`);
+          }
+        }
+      } else {
+        // Log other share messages (summaries, not individual shares)
+        console.log(`[${timestamp}] [SHARE] ${message}`);
+      }
       break;
     case 'job':
+      // Simplified job logging - only basic info
       console.log(`[${timestamp}] [JOB] ${message}`);
       break;
     default:
@@ -2763,6 +2805,7 @@ function logger(level, message) {
   }
 }
 
+// Utility functions
 function formatHashrate(hashrate) {
   if (hashrate === 0) return '0 H/s';
   
