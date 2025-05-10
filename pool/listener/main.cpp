@@ -600,7 +600,7 @@ void listenerThread(char* nodeIp)
 
 int run(int argc, char* argv[]) {
     if (argc == 1) {
-        printf("./oc_verifier [nodeip0] [nodeip1] ... [nodeipN]\n");
+        printf("./listener [nodeip0] [nodeip1] ... [nodeipN]\n");
         return 0;
     }
     getPublicKeyFromIdentity(DISPATCHER, dispatcherPubkey);
