@@ -51,6 +51,11 @@ std::atomic<bool> forceReconnect(false);
 std::atomic<int> reconnectingThreads(0);
 int totalPeerThreads = 0;  // Will be set in run() to argc-1
 
+// New variable to track the last reconnection time
+std::chrono::time_point<std::chrono::system_clock> lastReconnectTime;
+std::mutex lastReconnectTimeMutex;
+const int RECONNECT_COOLDOWN_SECONDS = 120; // 2 minutes cooldown
+
 struct task
 {
     uint8_t sourcePublicKey[32]; // the source public key is the DISPATCHER public key
@@ -109,6 +114,12 @@ void monitorTaskReception() {
         lastTaskTime = std::chrono::system_clock::now();
     }
     
+    // Initialize lastReconnectTime
+    {
+        std::lock_guard<std::mutex> lock(lastReconnectTimeMutex);
+        lastReconnectTime = std::chrono::system_clock::now();
+    }
+    
     while (!shouldExit) {
         bool shouldForceReconnect = false;
         
@@ -117,10 +128,22 @@ void monitorTaskReception() {
             auto now = std::chrono::system_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastTaskTime).count();
             
-            // If more than 60 seconds have passed since the last task, force reconnection
-            if (elapsed > 60 && !forceReconnect.load()) {
+            // Check if we're in cooldown period after reconnection
+            std::chrono::time_point<std::chrono::system_clock> reconnectTime;
+            {
+                std::lock_guard<std::mutex> reconnectLock(lastReconnectTimeMutex);
+                reconnectTime = lastReconnectTime;
+            }
+            auto timeSinceReconnect = std::chrono::duration_cast<std::chrono::seconds>(now - reconnectTime).count();
+            
+            // Only force reconnection if we're not in cooldown period and no tasks received for 60+ seconds
+            if (elapsed > 60 && !forceReconnect.load() && timeSinceReconnect > RECONNECT_COOLDOWN_SECONDS) {
                 printf("WARNING: No tasks received for %ld seconds. Forcing reconnection to all peers.\n", elapsed);
                 shouldForceReconnect = true;
+                
+                // Update the last reconnect time
+                std::lock_guard<std::mutex> reconnectLock(lastReconnectTimeMutex);
+                lastReconnectTime = now;
             }
         }
         
@@ -395,11 +418,7 @@ void listenerThread(char* nodeIp)
                     // If this was the last thread to reconnect, reset the force flag
                     if (remaining == 0) {
                         forceReconnect.store(false);
-                        printf("All peers have been reconnected.\n");
-                        
-                        // Reset the last task time to now
-                        std::lock_guard<std::mutex> timelock(lastTaskTimeMutex);
-                        lastTaskTime = std::chrono::system_clock::now();
+                        printf("All peers have been reconnected. Waiting for new tasks...\n");
                     }
                     
                     wasForceReconnected = false;
