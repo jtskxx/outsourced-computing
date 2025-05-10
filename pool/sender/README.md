@@ -33,4 +33,5 @@ It **receives mining solutions (shares)** via TCP and **relays** them securely i
 - Sender must have **access to the Computor seed** to properly authenticate solutions.
 - Lightweight and optimized for **low-latency mining relay**.
 
-![image](https://github.com/user-attachments/assets/54b99714-8a69-4fa9-852b-254e0b50287f)
+
+![image](https://github.com/user-attachments/assets/5ad65a09-8559-4e16-bc98-103c75ce8bc6)
