@@ -73,7 +73,7 @@ Edit the `CONFIG` object directly in `server.js`:
 node server.js
 
 # Access Web UI
-http://your-server-ip:8088/admin/computors
+http://your-server-ip:8088
 ```
 
 ---
@@ -97,8 +97,7 @@ Maintained by **Jetski**🥥
 
 ---
 
+![image](https://github.com/user-attachments/assets/3a8b9596-ecc5-4938-9d71-58d02cf6b296)
 
-
-  ![image](https://github.com/user-attachments/assets/f014e079-e05d-4b96-89bd-f094826ff8b6)
 
 
