@@ -20,6 +20,16 @@ It **receives mining solutions (shares)** via TCP and **relays** them securely i
 
 ---
 
+## ⚙️ Build Instructions
+
+```bash
+mkdir build
+cd build
+cmake ..
+make
+```
+---
+
 ## 📦 Dependencies
 
 - [`keyUtils.h`](keyUtils.h)
