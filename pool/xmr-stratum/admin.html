@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QUBIC <--> XMR Proxy Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #0099ff;
+      --primary-glow: #00bbff;
+      --secondary: #6e09e8;
+      --accent: #00ffb3;
+      --dark: #0a1222;
+      --darker: #060d19;
+      --card-bg: rgba(16, 24, 45, 0.7);
+      --success: #00e676;
+      --warning: #ffab00;
+      --error: #ff1744;
+      --text-primary: #ffffff;
+      --text-secondary: #b3e5fc;
+      --border-radius: 8px;
+      --grid-gap: 16px;
+      --card-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+      --glow-shadow: 0 0 10px var(--primary-glow);
+    }
+
+    * {
+      box-sizing: border-box;
+      transition: all 0.2s ease;
+    }
+
+    body {
+      font-family: 'Roboto', sans-serif;
+      line-height: 1.6;
+      color: var(--text-primary);
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      background: linear-gradient(135deg, var(--dark), var(--darker));
+      background-attachment: fixed;
+      min-height: 100vh;
+    }
+
+    h1, h2, h3 {
+      font-family: 'Orbitron', sans-serif;
+      letter-spacing: 1px;
+      margin-top: 0;
+    }
+
+    h1 {
+      text-align: center;
+      color: var(--accent);
+      text-shadow: 0 0 10px rgba(0, 255, 179, 0.5);
+      margin-bottom: 30px;
+      font-size: 2.5rem;
+      position: relative;
+    }
+
+    h1::after {
+      content: '';
+      display: block;
+      width: 100px;
+      height: 3px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      margin: 10px auto 0;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: var(--border-radius);
+      padding: 25px;
+      box-shadow: var(--card-shadow);
+      margin-bottom: 25px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: bold;
+      color: var(--text-secondary);
+    }
+
+    input[type="number"], input[type="text"], textarea, select {
+      width: 100%;
+      padding: 12px;
+      margin-bottom: 15px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: var(--border-radius);
+      font-size: 16px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-primary);
+      outline: none;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(0, 153, 255, 0.3);
+    }
+
+    button {
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      color: white;
+      border: none;
+      padding: 12px 18px;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 16px;
+      margin-right: 10px;
+      margin-bottom: 10px;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+      position: relative;
+      z-index: 1;
+      overflow: hidden;
+    }
+
+    button::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+      transition: 0.5s;
+      z-index: -1;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    }
+
+    button:hover::before {
+      left: 100%;
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    .save-btn {
+      background: linear-gradient(135deg, var(--success), #08ad9e);
+    }
+
+    .info {
+      background-color: rgba(0, 153, 255, 0.1);
+      padding: 15px;
+      border-left: 4px solid var(--primary);
+      margin-bottom: 20px;
+      border-radius: 0 var(--border-radius) var(--border-radius) 0;
+    }
+
+    .warning {
+      background-color: rgba(255, 171, 0, 0.1);
+      padding: 15px;
+      border-left: 4px solid var(--warning);
+      margin-bottom: 20px;
+      border-radius: 0 var(--border-radius) var(--border-radius) 0;
+    }
+
+    .error {
+      background-color: rgba(255, 23, 68, 0.1);
+      padding: 15px;
+      border-left: 4px solid var(--error);
+      margin-bottom: 20px;
+      border-radius: 0 var(--border-radius) var(--border-radius) 0;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--grid-gap);
+    }
+
+    .stat-box {
+      background: rgba(255, 255, 255, 0.05);
+      padding: 20px;
+      border-radius: var(--border-radius);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stat-box::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--primary), transparent);
+    }
+
+    .stat-value {
+      font-size: 28px;
+      font-weight: bold;
+      color: var(--primary);
+      font-family: 'Orbitron', sans-serif;
+      margin-bottom: 5px;
+    }
+
+    .stat-label {
+      color: var(--text-secondary);
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .computor-item {
+      display: flex;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 15px;
+      border-radius: var(--border-radius);
+      margin-bottom: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .computor-index {
+      width: 80px;
+      font-weight: bold;
+      color: var(--accent);
+    }
+
+    .computor-weight {
+      width: 180px;
+      display: flex;
+      align-items: center;
+    }
+
+    .weight-input {
+      width: 60px;
+      margin-right: 5px;
+      padding: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: var(--border-radius);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-primary);
+      text-align: center;
+    }
+
+    .save-btn {
+      background: linear-gradient(135deg, var(--success), #08ad9e);
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: bold;
+      min-width: 70px;
+      text-align: center;
+    }
+
+    .computor-identity {
+      flex-grow: 1;
+      font-family: monospace;
+      word-break: break-all;
+      font-size: 14px;
+      color: var(--text-secondary);
+      background: rgba(0, 0, 0, 0.2);
+      padding: 5px 10px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      margin: 0 10px;
+    }
+
+    .computor-action {
+      margin-left: 10px;
+    }
+
+    .computor-list {
+      max-height: 400px;
+      overflow-y: auto;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: var(--border-radius);
+      padding: 15px;
+      margin-top: 15px;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .tab {
+      display: flex;
+      margin-bottom: 25px;
+      border-radius: var(--border-radius);
+      overflow: hidden;
+      background: rgba(0, 0, 0, 0.3);
+      position: relative;
+    }
+
+    .tab::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, rgba(0, 153, 255, 0.2), rgba(110, 9, 232, 0.2));
+      opacity: 0.2;
+      z-index: -1;
+    }
+
+    .tab button {
+      flex: 1;
+      background: transparent;
+      color: var(--text-secondary);
+      float: none;
+      border: none;
+      outline: none;
+      cursor: pointer;
+      padding: 18px 20px;
+      transition: 0.3s;
+      font-size: 16px;
+      border-radius: 0;
+      margin: 0;
+      position: relative;
+      overflow: hidden;
+      z-index: 1;
+      font-family: 'Orbitron', sans-serif;
+      letter-spacing: 1px;
+    }
+
+    .tab button::before {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 3px;
+      background: var(--primary);
+      transform: scaleX(0);
+      transform-origin: right;
+      transition: transform 0.3s ease;
+    }
+
+    .tab button:hover {
+      background-color: rgba(0, 153, 255, 0.1);
+      transform: none;
+      box-shadow: none;
+    }
+
+    .tab button:hover::before {
+      transform: scaleX(0.5);
+      transform-origin: left;
+    }
+
+    .tab button.active {
+      background: linear-gradient(to bottom, rgba(0, 153, 255, 0.3), rgba(0, 0, 0, 0));
+      color: var(--primary);
+      font-weight: bold;
+      box-shadow: inset 0 0 10px rgba(0, 153, 255, 0.1);
+    }
+
+    .tab button.active::before {
+      transform: scaleX(1);
+    }
+
+    .tabcontent {
+      display: none;
+      padding: 0;
+      animation: fadeIn 0.5s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(0, 153, 255, 0.4); }
+      70% { box-shadow: 0 0 0 10px rgba(0, 153, 255, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(0, 153, 255, 0); }
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 30px;
+      padding: 20px;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    .footer a {
+      color: var(--primary);
+      text-decoration: none;
+      position: relative;
+    }
+
+    .footer a::after {
+      content: '';
+      position: absolute;
+      width: 100%;
+      height: 1px;
+      bottom: -2px;
+      left: 0;
+      background: linear-gradient(90deg, transparent, var(--primary), transparent);
+      transform: scaleX(0);
+      transform-origin: center;
+      transition: transform 0.3s ease;
+    }
+
+    .footer a:hover::after {
+      transform: scaleX(1);
+    }
+
+    /* PROGRESS BAR STYLES */
+    .progress-container {
+      margin-top: 10px;
+      width: 100%;
+    }
+
+    .progress-bar {
+      height: 10px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary), var(--accent));
+      border-radius: 5px;
+      transition: width 0.5s ease;
+    }
+
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 5px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    /* GRID LAYOUT FOR GROUPS */
+    .group-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--grid-gap);
+      margin-top: 20px;
+    }
+
+    .group-box {
+      background: rgba(255, 255, 255, 0.05);
+      padding: 15px;
+      border-radius: var(--border-radius);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .group-title {
+      font-weight: bold;
+      color: var(--accent);
+      margin-bottom: 8px;
+      font-family: 'Orbitron', sans-serif;
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--primary);
+      border-radius: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--primary-glow);
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+      .stats {
+        grid-template-columns: 1fr;
+      }
+      
+      .tab button {
+        padding: 12px 10px;
+        font-size: 14px;
+      }
+      
+      .computor-item {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      
+      .computor-identity {
+        width: 100%;
+        margin: 10px 0;
+      }
+      
+      .computor-weight {
+        width: 100%;
+        margin-bottom: 10px;
+      }
+      
+      .computor-action {
+        width: 100%;
+        margin-left: 0;
+      }
+
+      .group-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>QUBIC <--> XMR Proxy Settings</h1>
+  
+  <div class="tab" id="mainTabs">
+    <button class="tablinks" id="ComputorTabBtn" onclick="openTab(event, 'ComputorTab')">Computor Management</button>
+    <button class="tablinks" id="StatsTabBtn" onclick="openTab(event, 'StatsTab')">Mining Stats</button>
+    <button class="tablinks" id="APITabBtn" onclick="openTab(event, 'APITab')">Computor API</button>
+  </div>
+  
+  <div id="ComputorTab" class="tabcontent">
+    <div class="info">
+      Manage multiple computor indices with weighted distribution. The proxy will assign computor indices based on these weights.
+    </div>
+    
+    <div class="card">
+      <h2>Computor Distribution</h2>
+      <div id="computorDistribution"></div>
+      
+      <h3>Add New Computor</h3>
+      <div style="display: flex; gap: 15px; margin-bottom: 15px;">
+        <div style="flex: 1;">
+          <label for="newComputorIndex">Index (0-675):</label>
+          <input type="number" id="newComputorIndex" min="0" max="675">
+        </div>
+        <div style="flex: 1;">
+          <label for="newComputorWeight">Weight (%):</label>
+          <input type="number" id="newComputorWeight" min="1" max="100" value="10">
+        </div>
+      </div>
+      <button onclick="addComputor()">Add Computor</button>
+      <div id="computorResult"></div>
+    </div>
+    
+    <div class="card">
+      <h2>Batch Add by Identity</h2>
+      <div class="info">
+        Paste Qubic identity strings, one per line. Each identity will be converted to its index number.
+      </div>
+      <textarea id="identityBatch" rows="5" placeholder="Paste Qubic identity strings here, one per line..."></textarea>
+      <div style="margin-bottom: 15px;">
+        <label for="batchWeight">Weight for each (%):</label>
+        <input type="number" id="batchWeight" min="1" max="100" value="10">
+      </div>
+      <button onclick="addIdentityBatch()">Add Identities</button>
+      <div id="batchResult"></div>
+    </div>
+  </div>
+  
+  <div id="StatsTab" class="tabcontent">
+    <div class="card">
+      <h2>Mining Statistics</h2>
+      <div class="stats">
+        <div class="stat-box">
+          <div class="stat-value" id="totalShares">-</div>
+          <div class="stat-label">Total Shares</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="activeMiners">-</div>
+          <div class="stat-label">Active Miners</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="totalHashrate">-</div>
+          <div class="stat-label">Total Hashrate</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="uptime">-</div>
+          <div class="stat-label">Uptime</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NEW GROUP OPTIMIZATION METRICS -->
+    <div class="card">
+      <h2>Group Optimization Metrics</h2>
+      <div class="stats">
+        <div class="stat-box">
+          <div class="stat-value" id="groupSwitchCooldown">60s</div>
+          <div class="stat-label">Group Switch Cooldown</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="tasksMined">-</div>
+          <div class="stat-label">Tasks Mined</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="tasksSkipped">-</div>
+          <div class="stat-label">Tasks Skipped</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="avgProcessingTime">-</div>
+          <div class="stat-label">Avg. Processing Time</div>
+        </div>
+      </div>
+      
+      <div class="stats" style="margin-top: 15px;">
+        <div class="stat-box">
+          <div class="stat-value" id="minersSkipped">-</div>
+          <div class="stat-label">Miners Skipped (Last Job)</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="totalTasks">-</div>
+          <div class="stat-label">Total Tasks Processed</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="lastProcessed">-</div>
+          <div class="stat-label">Last Processed</div>
+        </div>
+        <div class="stat-box" style="background: rgba(0, 0, 0, 0.2);">
+          <!-- Placeholder for balance -->
+        </div>
+      </div>
+
+      <h3>Task Distribution by Group</h3>
+      <div class="group-grid">
+        <div class="group-box">
+          <div class="group-title">Group 1 (0-168)</div>
+          <div id="group1-tasks">-</div>
+          <div class="progress-container">
+            <div class="progress-bar">
+              <div class="progress-fill" id="group1-progress" style="width: 0%"></div>
+            </div>
+            <div class="progress-label">
+              <span id="group1-workers">0 workers</span>
+              <span id="group1-percent">0%</span>
+            </div>
+          </div>
+        </div>
+        <div class="group-box">
+          <div class="group-title">Group 2 (169-337)</div>
+          <div id="group2-tasks">-</div>
+          <div class="progress-container">
+            <div class="progress-bar">
+              <div class="progress-fill" id="group2-progress" style="width: 0%"></div>
+            </div>
+            <div class="progress-label">
+              <span id="group2-workers">0 workers</span>
+              <span id="group2-percent">0%</span>
+            </div>
+          </div>
+        </div>
+        <div class="group-box">
+          <div class="group-title">Group 3 (338-506)</div>
+          <div id="group3-tasks">-</div>
+          <div class="progress-container">
+            <div class="progress-bar">
+              <div class="progress-fill" id="group3-progress" style="width: 0%"></div>
+            </div>
+            <div class="progress-label">
+              <span id="group3-workers">0 workers</span>
+              <span id="group3-percent">0%</span>
+            </div>
+          </div>
+        </div>
+        <div class="group-box">
+          <div class="group-title">Group 4 (507-675)</div>
+          <div id="group4-tasks">-</div>
+          <div class="progress-container">
+            <div class="progress-bar">
+              <div class="progress-fill" id="group4-progress" style="width: 0%"></div>
+            </div>
+            <div class="progress-label">
+              <span id="group4-workers">0 workers</span>
+              <span id="group4-percent">0%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <div id="APITab" class="tabcontent">
+    <div class="card">
+      <h2>Computor API</h2>
+      <div class="info">
+        Fetch the computor list from the Qubic API for a specific epoch. This will update the available identities.
+      </div>
+      
+      <div style="display: flex; gap: 15px; align-items: flex-end; margin-bottom: 15px;">
+        <div style="flex: 1;">
+          <label for="epochNumber">Epoch Number:</label>
+          <input type="number" id="epochNumber" min="1" value="CURRENT_EPOCH">
+        </div>
+        <button onclick="fetchComputorList()">Get Computor List</button>
+      </div>
+      
+      <div id="apiResult"></div>
+      
+      <h3>Computor List</h3>
+      <div class="info">Current Epoch: <span id="currentEpoch">CURRENT_EPOCH</span></div>
+      <div id="computorList" class="computor-list">
+        <div id="computorListContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <a href="https://github.com/jtskxx/Jetski-Qubic-Pool" target="_blank">jetskipool.ai</a>
+  </div>
+  
+  <script>
+    // Tab functionality with persistence
+    function openTab(evt, tabName) {
+      var i, tabcontent, tablinks;
+      tabcontent = document.getElementsByClassName("tabcontent");
+      for (i = 0; i < tabcontent.length; i++) {
+        tabcontent[i].style.display = "none";
+      }
+      tablinks = document.getElementsByClassName("tablinks");
+      for (i = 0; i < tablinks.length; i++) {
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+      }
+      document.getElementById(tabName).style.display = "block";
+      if (evt) { // Check if event exists (for initial load)
+        evt.currentTarget.className += " active";
+      } else {
+        // Find the correct button and activate it
+        document.getElementById(tabName + "Btn").className += " active";
+      }
+      
+      // Save active tab to localStorage
+      localStorage.setItem("activeTab", tabName);
+      
+      // Refresh data when tab is opened
+      if (tabName === 'StatsTab') {
+        loadStats();
+      } else if (tabName === 'ComputorTab') {
+        loadComputorDistribution();
+      } else if (tabName === 'APITab') {
+        loadComputorList();
+      }
+    }
+    
+    // Format time duration (seconds to days, hours, minutes, seconds)
+    function formatDuration(seconds) {
+      const days = Math.floor(seconds / 86400);
+      seconds %= 86400;
+      const hours = Math.floor(seconds / 3600);
+      seconds %= 3600;
+      const minutes = Math.floor(seconds / 60);
+      seconds = Math.floor(seconds % 60);
+      
+      const parts = [];
+      if (days > 0) parts.push(days + 'd');
+      if (hours > 0) parts.push(hours + 'h');
+      if (minutes > 0) parts.push(minutes + 'm');
+      if (seconds > 0 || parts.length === 0) parts.push(seconds + 's');
+      
+      return parts.join(' ');
+    }
+    
+    // Load mining statistics with animation
+    function loadStats() {
+      fetch('/stats')
+        .then(response => response.json())
+        .then(data => {
+          // Update basic stats
+          animateValue("totalShares", 0, data.totalShares, 1000);
+          animateValue("activeMiners", 0, data.minerCount.active, 1000);
+          document.getElementById('totalHashrate').textContent = data.totalHashrateFormatted;
+          document.getElementById('uptime').textContent = formatDuration(data.uptime);
+          
+          // Update task statistics
+          if (data.taskStats) {
+            animateValue("tasksMined", 0, data.taskStats.mined, 1000);
+            animateValue("tasksSkipped", 0, data.taskStats.skipped, 1000);
+            animateValue("totalTasks", 0, data.taskStats.processed, 1000);
+            document.getElementById('minersSkipped').textContent = data.lastJobSkippedMiners || 0;
+            
+            // Processing time formatting
+            if (data.taskStats.avgProcessingTime) {
+              document.getElementById('avgProcessingTime').textContent = `${data.taskStats.avgProcessingTime.toFixed(2)}ms`;
+            }
+            
+            // Last processed time formatting
+            if (data.taskStats.lastProcessed) {
+              const lastTime = new Date(data.taskStats.lastProcessed);
+              const now = new Date();
+              const diffSeconds = Math.floor((now - lastTime) / 1000);
+              
+              let timeAgo = 'just now';
+              if (diffSeconds > 60) {
+                timeAgo = `${Math.floor(diffSeconds / 60)}m ago`;
+              } else if (diffSeconds > 0) {
+                timeAgo = `${diffSeconds}s ago`;
+              }
+              
+              document.getElementById('lastProcessed').textContent = timeAgo;
+            }
+            
+            // Update task distribution by group
+            if (data.taskStats.byGroup && data.taskStats.byGroup.length === 4) {
+              const totalTasks = data.taskStats.byGroup.reduce((a, b) => a + b, 0);
+              
+              for (let i = 0; i < 4; i++) {
+                const groupTasks = data.taskStats.byGroup[i];
+                const groupPercent = totalTasks > 0 ? Math.round((groupTasks / totalTasks) * 100) : 0;
+                
+                document.getElementById(`group${i+1}-tasks`).textContent = `${groupTasks} tasks mined`;
+                document.getElementById(`group${i+1}-percent`).textContent = `${groupPercent}%`;
+                document.getElementById(`group${i+1}-progress`).style.width = `${groupPercent}%`;
+              }
+            }
+          }
+          
+          // Update worker distribution by group
+          if (data.workerGroupAssignments) {
+            // Count workers by group
+            const workersByGroup = [0, 0, 0, 0];
+            
+            // Parse the worker group assignments
+            data.workerGroupAssignments.forEach(assignment => {
+              if (assignment.group > 0 && assignment.group <= 4) {
+                workersByGroup[assignment.group - 1]++;
+              }
+            });
+            
+            const totalWorkers = workersByGroup.reduce((a, b) => a + b, 0);
+            
+            for (let i = 0; i < 4; i++) {
+              const groupWorkers = workersByGroup[i];
+              const workerPercent = totalWorkers > 0 ? Math.round((groupWorkers / totalWorkers) * 100) : 0;
+              document.getElementById(`group${i+1}-workers`).textContent = `${groupWorkers} workers`;
+            }
+          }
+          
+          // Update cooldown value
+          if (data.groupSwitchCooldown) {
+            document.getElementById('groupSwitchCooldown').textContent = `${Math.round(data.groupSwitchCooldown/1000)}s`;
+          }
+          
+          // Pulse animation for updated stats
+          const statBoxes = document.querySelectorAll('.stat-box');
+          statBoxes.forEach(box => {
+            box.style.animation = 'pulse 1.5s';
+            setTimeout(() => {
+              box.style.animation = '';
+            }, 1500);
+          });
+        })
+        .catch(error => {
+          console.error('Error loading stats:', error);
+        });
+    }
+    
+    // Animate value counting up
+    function animateValue(id, start, end, duration) {
+      const element = document.getElementById(id);
+      if (!element) return;
+      
+      let startTimestamp = null;
+      const step = (timestamp) => {
+        if (!startTimestamp) startTimestamp = timestamp;
+        const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+        const value = Math.floor(progress * (end - start) + start);
+        element.textContent = value.toLocaleString();
+        if (progress < 1) {
+          window.requestAnimationFrame(step);
+        }
+      };
+      window.requestAnimationFrame(step);
+    }
+    
+    // Load computor distribution with simplified weight editor
+    function loadComputorDistribution() {
+      fetch('/stats')
+        .then(response => response.json())
+        .then(data => {
+          const distributionDiv = document.getElementById('computorDistribution');
+          
+          if (data.computorDistribution && data.computorDistribution.length > 0) {
+            let html = '';
+            data.computorDistribution.forEach((item, i) => {
+              html += `
+                <div class="computor-item" id="computor-${i}">
+                  <div class="computor-index">Index: ${item.index}</div>
+                  <div class="computor-identity">${item.identity || 'Unknown Identity'}</div>
+                  <div class="computor-weight">
+                    <input type="number" id="weight-${i}" class="weight-input" min="1" max="100" value="${item.weight}">
+                    <span>%</span>
+                    <button class="save-btn" onclick="saveWeight(${i})">Save</button>
+                  </div>
+                  <div class="computor-action">
+                    <button onclick="removeComputor(${i})">Remove</button>
+                  </div>
+                </div>
+              `;
+            });
+            
+            distributionDiv.innerHTML = html;
+          } else {
+            distributionDiv.innerHTML = '<div class="info">No computor distribution configured</div>';
+          }
+        })
+        .catch(error => {
+          console.error('Error loading computor distribution:', error);
+        });
+    }
+    
+    // Save weight function (simplified)
+    function saveWeight(index) {
+      const weight = parseInt(document.getElementById(`weight-${index}`).value);
+      
+      if (isNaN(weight) || weight < 1 || weight > 100) {
+        showNotification('error', 'Weight must be between 1 and 100');
+        return;
+      }
+      
+      fetch('/update-computor-weight', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index, weight }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showNotification('success', data.message);
+        } else {
+          showNotification('error', data.message);
+        }
+      })
+      .catch(error => {
+        showNotification('error', error.message);
+      });
+    }
+    
+    // Show notification instead of alert
+    function showNotification(type, message) {
+      const notifId = 'notification-' + Math.random().toString(36).substr(2, 9);
+      const notif = document.createElement('div');
+      notif.id = notifId;
+      notif.className = type === 'success' ? 'info' : 'error';
+      notif.innerHTML = message;
+      notif.style.position = 'fixed';
+      notif.style.bottom = '20px';
+      notif.style.right = '20px';
+      notif.style.maxWidth = '300px';
+      notif.style.zIndex = '1000';
+      notif.style.opacity = '0';
+      notif.style.transform = 'translateY(20px)';
+      notif.style.transition = 'opacity 0.3s, transform 0.3s';
+      
+      document.body.appendChild(notif);
+      
+      // Fade in
+      setTimeout(() => {
+        notif.style.opacity = '1';
+        notif.style.transform = 'translateY(0)';
+      }, 10);
+      
+      // Fade out and remove
+      setTimeout(() => {
+        notif.style.opacity = '0';
+        notif.style.transform = 'translateY(20px)';
+        setTimeout(() => {
+          if (document.getElementById(notifId)) {
+            document.body.removeChild(notif);
+          }
+        }, 300);
+      }, 3000);
+    }
+    
+    // Load computor list
+    function loadComputorList() {
+      fetch('/stats')
+        .then(response => response.json())
+        .then(data => {
+          document.getElementById('currentEpoch').textContent = data.currentEpoch || 'Unknown';
+          
+          fetch('/computor-list')
+            .then(response => response.json())
+            .then(listData => {
+              const listDiv = document.getElementById('computorListContent');
+              
+              if (listData && listData.length > 0) {
+                let html = '';
+                listData.forEach((identity, index) => {
+                  html += `
+                    <div style="margin-bottom: 10px; display: flex; align-items: center;">
+                      <span style="font-weight: bold; min-width: 60px; color: var(--accent);">${index}:</span>
+                      <span style="font-family: monospace; word-break: break-all; flex-grow: 1; background: rgba(0, 0, 0, 0.2); padding: 5px 10px; border-radius: 4px; color: var(--text-secondary);">${identity}</span>
+                      <button onclick="addIdentityFromList(${index}, '${identity}')" style="margin-left: 10px;">Add</button>
+                    </div>
+                  `;
+                });
+                
+                listDiv.innerHTML = html;
+              } else {
+                listDiv.innerHTML = '<div class="info">No computor list available. Use "Get Computor List" to fetch the list.</div>';
+              }
+            })
+            .catch(error => {
+              console.error('Error loading computor list:', error);
+              document.getElementById('computorListContent').innerHTML = 
+                '<div class="error">Error loading computor list. Use "Get Computor List" to fetch the list.</div>';
+            });
+        })
+        .catch(error => {
+          console.error('Error loading stats:', error);
+        });
+    }
+    
+    // Add computor
+    function addComputor() {
+      const index = parseInt(document.getElementById('newComputorIndex').value);
+      const weight = parseInt(document.getElementById('newComputorWeight').value);
+      
+      if (isNaN(index) || index < 0 || index > 675) {
+        document.getElementById('computorResult').innerHTML = 
+          '<div class="error">Invalid computor index! Must be between 0 and 675.</div>';
+        return;
+      }
+      
+      if (isNaN(weight) || weight < 1 || weight > 100) {
+        document.getElementById('computorResult').innerHTML = 
+          '<div class="error">Invalid weight! Must be between 1 and 100.</div>';
+        return;
+      }
+      
+      fetch('/add-computor', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index, weight }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('computorResult').innerHTML = 
+            `<div class="info">${data.message}</div>`;
+          
+          // Clear inputs
+          document.getElementById('newComputorIndex').value = '';
+          
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          document.getElementById('computorResult').innerHTML = 
+            `<div class="error">${data.message}</div>`;
+        }
+      })
+      .catch(error => {
+        document.getElementById('computorResult').innerHTML = 
+          `<div class="error">Error: ${error.message}</div>`;
+      });
+    }
+    
+    // Remove computor
+    function removeComputor(index) {
+      fetch('/remove-computor', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          // Reload distribution
+          loadComputorDistribution();
+          showNotification('success', 'Computor removed successfully');
+        } else {
+          showNotification('error', 'Error removing computor: ' + data.message);
+        }
+      })
+      .catch(error => {
+        showNotification('error', 'Error: ' + error.message);
+      });
+    }
+    
+    // Add identity from list
+    function addIdentityFromList(index, identity) {
+      const weight = 10; // Default weight
+      
+      fetch('/add-computor', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index, weight, identity }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showNotification('success', "Added computor " + index + " with weight " + weight + "%");
+          
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          showNotification('error', "Error adding computor: " + data.message);
+        }
+      })
+      .catch(error => {
+        showNotification('error', "Error: " + error.message);
+      });
+    }
+    
+    // Add identity batch
+    function addIdentityBatch() {
+      const identities = document.getElementById('identityBatch').value.trim().split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
+      
+      const weight = parseInt(document.getElementById('batchWeight').value);
+      
+      if (identities.length === 0) {
+        document.getElementById('batchResult').innerHTML = 
+          '<div class="error">Please enter at least one identity.</div>';
+        return;
+      }
+      
+      if (isNaN(weight) || weight < 1 || weight > 100) {
+        document.getElementById('batchResult').innerHTML = 
+          '<div class="error">Invalid weight! Must be between 1 and 100.</div>';
+        return;
+      }
+      
+      fetch('/add-identity-batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ identities, weight }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('batchResult').innerHTML = 
+            `<div class="info">${data.message}</div>`;
+          
+          // Clear textarea
+          document.getElementById('identityBatch').value = '';
+          
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          document.getElementById('batchResult').innerHTML = 
+            `<div class="error">${data.message}</div>`;
+        }
+      })
+      .catch(error => {
+        document.getElementById('batchResult').innerHTML = 
+          `<div class="error">Error: ${error.message}</div>`;
+      });
+    }
+    
+    // Fetch computor list
+    function fetchComputorList() {
+      const epoch = parseInt(document.getElementById('epochNumber').value);
+      
+      if (isNaN(epoch) || epoch < 1) {
+        document.getElementById('apiResult').innerHTML = 
+          '<div class="error">Invalid epoch number!</div>';
+        return;
+      }
+      
+      document.getElementById('apiResult').innerHTML = 
+        '<div class="info">Fetching computor list for epoch ' + epoch + '...</div>';
+      
+      fetch('/fetch-computor-list', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ epoch }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('apiResult').innerHTML = 
+            `<div class="info">${data.message}</div>`;
+          
+          // Update current epoch display
+          document.getElementById('currentEpoch').textContent = epoch;
+          
+          // Reload computor list
+          loadComputorList();
+        } else {
+          document.getElementById('apiResult').innerHTML = 
+            `<div class="error">${data.message}</div>`;
+        }
+      })
+      .catch(error => {
+        document.getElementById('apiResult').innerHTML = 
+          `<div class="error">Error: ${error.message}</div>`;
+      });
+    }
+    
+    // Check for active tab and set it on page load
+    document.addEventListener('DOMContentLoaded', function() {
+      // Try to get active tab from localStorage
+      const activeTab = localStorage.getItem("activeTab");
+      
+      if (activeTab) {
+        // Open the saved tab without an event
+        openTab(null, activeTab);
+      } else {
+        // Default to first tab
+        document.getElementById("ComputorTabBtn").click();
+      }
+      
+      // Load initial data
+      loadStats();
+      loadComputorDistribution();
+    });
+    
+    // Refresh data periodically
+    setInterval(loadStats, 10000);
+  </script>
+</body>
+</html>
