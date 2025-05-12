@@ -1695,7 +1695,7 @@ class ShareDistributionServer {
       logger('error', `Share server error: ${err.message}`);
     });
     
-    this.server.listen(CONFIG.shareDistributionPort, '0.0.0.0', () => {
+    this.server.listen(CONFIG.shareDistributionPort, '127.0.0.1', () => {
       logger('info', `Share distribution server listening on port ${CONFIG.shareDistributionPort}`);
     });
   }
