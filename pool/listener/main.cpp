@@ -30,6 +30,7 @@ typedef int socklen_t;  // socklen_t is not defined in Windows
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>  // Added for TCP_NODELAY on Unix systems
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -46,9 +47,17 @@ uint8_t dispatcherPubkey[32] = { 0 };
 bool shouldExit = false;
 uint64_t prevTask = 0;
 
+// Hardcoded list of backup nodes
+// These will be used if no command line arguments are provided or during restart
+const std::vector<std::string> BACKUP_NODES = {
+    "NODEIP1", "NODEIP2"
+};
+
+// Vector to store node IPs (either from command line or hardcoded)
+std::vector<std::string> nodeIPs;
 // Global variables for task monitoring
 std::atomic<uint64_t> lastTaskTimestamp;
-const uint64_t INACTIVITY_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes in milliseconds
+const uint64_t INACTIVITY_THRESHOLD_MS = 30 * 1000; // 30 seconds in milliseconds (MODIFIED)
 static char** savedArgv;
 static int savedArgc;
 
@@ -102,7 +111,47 @@ std::atomic<int> nPeer;
 std::vector<socket_t> clientSockets;
 std::mutex clientSocketsMutex;
 
-// Function to monitor task activity and restart if inactive
+// Function to efficiently send to clients without adding delays before send operations
+bool sendAllData(socket_t socket, const char* data, size_t length) {
+    size_t totalSent = 0;
+    while (totalSent < length) {
+        int sent = send(socket, data + totalSent, length - totalSent, 0);
+        if (sent <= 0) {
+            #ifdef _WIN32
+            int errorCode = WSAGetLastError();
+            if (errorCode != WSAEWOULDBLOCK) {
+                return false;
+            }
+            #else
+            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                return false;
+            }
+            #endif
+            // Would block, continue immediately to avoid delays
+            continue;
+        }
+        totalSent += sent;
+    }
+    return true;
+}
+
+// Optimized broadcast function - detects and removes dead connections during actual send
+void broadcastToClients(const std::string& message) {
+    std::lock_guard<std::mutex> lock(clientSocketsMutex);
+    
+    auto it = clientSockets.begin();
+    while (it != clientSockets.end()) {
+        if (!sendAllData(*it, message.c_str(), message.length())) {
+            // Send failed, close and remove socket
+            CLOSE_SOCKET(*it);
+            it = clientSockets.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+// Function to monitor task activity and exit if inactive
 void monitorTaskActivity() {
     printf("Starting task activity monitor thread\n");
     
@@ -119,7 +168,7 @@ void monitorTaskActivity() {
             uint64_t elapsed = currentTimeMs - lastTask;
             
             if (elapsed > INACTIVITY_THRESHOLD_MS) {
-                printf("WARNING: No tasks received for %lu ms (threshold: %lu ms). Restarting program...\n", 
+                printf("WARNING: No tasks received for %lu ms (threshold: %lu ms). Exiting...\n", 
                        (unsigned long)elapsed, (unsigned long)INACTIVITY_THRESHOLD_MS);
                 
                 // Set exit flag to stop all threads
@@ -128,72 +177,17 @@ void monitorTaskActivity() {
                 // Wait a little to allow threads to clean up
                 SLEEP(2000);
                 
-                // Restart the program with the same arguments
-                #ifdef _WIN32
-                // Windows restart using CreateProcess
-                STARTUPINFO si;
-                PROCESS_INFORMATION pi;
-                ZeroMemory(&si, sizeof(si));
-                si.cb = sizeof(si);
-                ZeroMemory(&pi, sizeof(pi));
-                
-                // Create command line
-                char cmdLine[2048] = {0};
-                for (int i = 0; i < savedArgc; i++) {
-                    strcat(cmdLine, savedArgv[i]);
-                    if (i < savedArgc - 1) strcat(cmdLine, " ");
-                }
-                
-                if (!CreateProcess(NULL, cmdLine, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-                    printf("Failed to restart program with CreateProcess. Error: %d\n", GetLastError());
-                }
-                else {
-                    // Close process and thread handles
-                    CloseHandle(pi.hProcess);
-                    CloseHandle(pi.hThread);
-                }
-                #else
-                // Unix restart using execv
-                execv(savedArgv[0], savedArgv);
-                #endif
-                
-                // If restart fails, exit with error
-                printf("Failed to restart program. Exiting.\n");
-                exit(1);
+                // Simply exit the program with a specific code that systemd can detect
+                exit(0);
             }
         }
         
-        // Check every 10 seconds
-        SLEEP(10000);
+        // Check every 5 seconds
+        SLEEP(5000);
     }
 }
 
-// Send message to all connected clients
-void broadcastToClients(const std::string& message) {
-    std::lock_guard<std::mutex> lock(clientSocketsMutex);
-    std::vector<socket_t> disconnectedClients;
-
-    for (const auto& clientSocket : clientSockets) {
-        int result = send(clientSocket, message.c_str(), message.length(), 0);
-        if (result <= 0) {
-            // Mark this client for removal
-            disconnectedClients.push_back(clientSocket);
-        }
-    }
-
-    // Remove disconnected clients
-    for (const auto& socket : disconnectedClients) {
-        // Use remove_if with a lambda instead of remove to avoid name conflict
-        clientSockets.erase(
-            std::remove_if(clientSockets.begin(), clientSockets.end(),
-                [&socket](const socket_t& s) { return s == socket; }),
-            clientSockets.end()
-        );
-        CLOSE_SOCKET(socket);
-    }
-}
-
-// TCP server thread
+// Optimized TCP server thread
 void tcpServerThread() {
     printf("Starting TCP server on port %d for JSON broadcasting\n", TCP_SERVER_PORT);
 
@@ -216,9 +210,15 @@ void tcpServerThread() {
         return;
     }
 
-    // Allow reuse of address
+    // Allow reuse of address and configure socket options
     int opt = 1;
     setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+    
+    // Set keep-alive to detect broken connections at TCP level
+    setsockopt(serverSocket, SOL_SOCKET, SO_KEEPALIVE, (const char*)&opt, sizeof(opt));
+    
+    // Set TCP_NODELAY to minimize latency
+    setsockopt(serverSocket, IPPROTO_TCP, TCP_NODELAY, (const char*)&opt, sizeof(opt));
 
     // Bind the socket
     struct sockaddr_in serverAddr;
@@ -236,7 +236,7 @@ void tcpServerThread() {
     }
 
     // Listen for connections
-    if (listen(serverSocket, 5) < 0) {
+    if (listen(serverSocket, 10) < 0) { // Increased backlog from 5 to 10
         printf("Failed to listen on server socket\n");
         CLOSE_SOCKET(serverSocket);
 #ifdef _WIN32
@@ -247,7 +247,7 @@ void tcpServerThread() {
 
     printf("TCP server listening on port %d\n", TCP_SERVER_PORT);
 
-    // Set non-blocking mode
+    // Set non-blocking mode for server socket
 #ifdef _WIN32
     u_long mode = 1;
     ioctlsocket(serverSocket, FIONBIO, &mode);
@@ -265,12 +265,26 @@ void tcpServerThread() {
         if (clientSocket != SOCKET_ERROR_VAL) {
             printf("New client connected: %s\n", inet_ntoa(clientAddr.sin_addr));
 
+            // Configure client socket for performance
+            int opt = 1;
+            setsockopt(clientSocket, SOL_SOCKET, SO_KEEPALIVE, (const char*)&opt, sizeof(opt));
+            setsockopt(clientSocket, IPPROTO_TCP, TCP_NODELAY, (const char*)&opt, sizeof(opt));
+            
+            // Set non-blocking mode for client socket
+#ifdef _WIN32
+            u_long mode = 1;
+            ioctlsocket(clientSocket, FIONBIO, &mode);
+#else
+            int flags = fcntl(clientSocket, F_GETFL, 0);
+            fcntl(clientSocket, F_SETFL, flags | O_NONBLOCK);
+#endif
+
             // Add client to the list
             std::lock_guard<std::mutex> lock(clientSocketsMutex);
             clientSockets.push_back(clientSocket);
         }
 
-        SLEEP(100);  // Short sleep to prevent busy-waiting
+        SLEEP(10);  // Short sleep to prevent busy-waiting, still very responsive
     }
 
     // Cleanup
@@ -396,18 +410,22 @@ void verifyThread()
     randomx_release_cache(cache);
 }
 
-void listenerThread(char* nodeIp)
+void listenerThread(const std::string& nodeIp)
 {
+    // Convert string IP to char* for C API functions
+    char* nodeIpChar = strdup(nodeIp.c_str());
+    
     QCPtr qc;
     bool needReconnect = true;
-    std::string log_header = "[" + std::string(nodeIp) + "]: ";
+    std::string log_header = "[" + nodeIp + "]: ";
+    
     while (!shouldExit)
     {
         try {
             if (needReconnect) {
                 needReconnect = false;
                 nPeer.fetch_add(1);
-                qc = make_qc(nodeIp, PORT);
+                qc = make_qc(nodeIpChar, PORT);
                 qc->exchangePeer();// do the handshake stuff
                 // TODO: connect to received peers
             }
@@ -579,13 +597,30 @@ void listenerThread(char* nodeIp)
             SLEEP(1000);
         }
     }
+    
+    // Clean up
+    free(nodeIpChar);
 }
 
 int run(int argc, char* argv[]) {
-    if (argc == 1) {
-        printf("./oc_verifier [nodeip0] [nodeip1] ... [nodeipN]\n");
-        return 0;
+    // Initialize nodeIPs - either from command line or use backup nodes
+    if (argc > 1) {
+        // Use nodes from command line
+        for (int i = 1; i < argc; i++) {
+            nodeIPs.push_back(argv[i]);
+        }
+    } else {
+        // Use backup nodes if no command line arguments
+        nodeIPs = BACKUP_NODES;
+        printf("No node IPs provided, using %zu hardcoded backup nodes\n", nodeIPs.size());
     }
+    
+    if (nodeIPs.empty()) {
+        printf("No node IPs available. Please provide at least one node IP.\n");
+        return 1;
+    }
+    
+    printf("Starting with %zu nodes\n", nodeIPs.size());
     getPublicKeyFromIdentity(DISPATCHER, dispatcherPubkey);
 
     // Start TCP server thread for JSON broadcasting
@@ -595,25 +630,24 @@ int run(int argc, char* argv[]) {
     std::thread monitorThread(monitorTaskActivity);
     
     std::vector<std::thread> thr;
-    for (int i = 0; i < argc - 1; i++)
-    {
-        thr.push_back(std::thread(listenerThread, argv[1 + i]));
+    for (const auto& nodeIp : nodeIPs) {
+        thr.push_back(std::thread(listenerThread, nodeIp));
     }
 
     std::thread verify_thr[XMR_VERIFY_THREAD];
-    for (int i = 0; i < XMR_VERIFY_THREAD; i++)
-    {
+    for (int i = 0; i < XMR_VERIFY_THREAD; i++) {
         verify_thr[i] = std::thread(verifyThread);
     }
 
     SLEEP(3000);
-    while (!shouldExit)
-    {
+    while (!shouldExit) {
         SLEEP(10000);
     }
 
     // Wait for TCP server thread to exit
-    tcpServer.join();
+    if (tcpServer.joinable()) {
+        tcpServer.join();
+    }
     
     // Wait for monitor thread
     if (monitorThread.joinable()) {
