@@ -50,14 +50,14 @@ uint64_t prevTask = 0;
 // Hardcoded list of backup nodes
 // These will be used if no command line arguments are provided or during restart
 const std::vector<std::string> BACKUP_NODES = {
-    "NODEIP1", "NODEIP2"
+    "NODEIP1", "NODEIP2",
 };
 
 // Vector to store node IPs (either from command line or hardcoded)
 std::vector<std::string> nodeIPs;
 // Global variables for task monitoring
 std::atomic<uint64_t> lastTaskTimestamp;
-const uint64_t INACTIVITY_THRESHOLD_MS = 70 * 1000; // 1m10 seconds in milliseconds (MODIFIED)
+const uint64_t INACTIVITY_THRESHOLD_MS = 60 * 1000; // 1m seconds in milliseconds (MODIFIED)
 static char** savedArgv;
 static int savedArgc;
 
@@ -542,8 +542,18 @@ void listenerThread(const std::string& nodeIp)
                     char hexSeed[65] = { 0 };
                     byteToHex(tk->m_seed, hexSeed, 32);
 
-                    // Updated target value 
-                    char hexTarget[17] = "B62F0200AD010000";
+                    // Convert the target value from task to hex string
+                    char hexTarget[17] = {0};
+                    snprintf(hexTarget, sizeof(hexTarget), 
+                             "%02X%02X%02X%02X%02X%02X%02X%02X",
+                             (uint8_t)(tk->m_target),
+                             (uint8_t)(tk->m_target >> 8),
+                             (uint8_t)(tk->m_target >> 16),
+                             (uint8_t)(tk->m_target >> 24),
+                             (uint8_t)(tk->m_target >> 32),
+                             (uint8_t)(tk->m_target >> 40),
+                             (uint8_t)(tk->m_target >> 48),
+                             (uint8_t)(tk->m_target >> 56));
 
                     // Format the JSON
                     char jsonOutput[2048];
