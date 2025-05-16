@@ -32,7 +32,7 @@ const CONFIG = {
   keepaliveTimeout: 600000, // 10 minutes
   keepaliveInterval: 30000,
   hashrateWindow: 600000, // 10 minutes
-  xmrShareDifficulty: 480045,
+  xmrShareDifficulty: 10011000,
   
   // Reset schedule (Wednesday at 12PM UTC NEW QUBIC EPOCH) TO FIX 
   resetDay: 3,
