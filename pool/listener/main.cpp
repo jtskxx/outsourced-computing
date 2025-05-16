@@ -543,7 +543,7 @@ void listenerThread(const std::string& nodeIp)
                     byteToHex(tk->m_seed, hexSeed, 32);
 
                     // Updated target value 
-                    char hexTarget[17] = "780D7F02F3220000";
+                    char hexTarget[17] = "B62F0200AD010000";
 
                     // Format the JSON
                     char jsonOutput[2048];
