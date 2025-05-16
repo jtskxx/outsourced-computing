@@ -57,7 +57,7 @@ const std::vector<std::string> BACKUP_NODES = {
 std::vector<std::string> nodeIPs;
 // Global variables for task monitoring
 std::atomic<uint64_t> lastTaskTimestamp;
-const uint64_t INACTIVITY_THRESHOLD_MS = 30 * 1000; // 30 seconds in milliseconds (MODIFIED)
+const uint64_t INACTIVITY_THRESHOLD_MS = 70 * 1000; // 1m10 seconds in milliseconds (MODIFIED)
 static char** savedArgv;
 static int savedArgc;
 
