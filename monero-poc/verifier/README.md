@@ -1,3 +1,6 @@
+**UPDATE REPO/ ONLY MAIN.CPP UPDATED**
+--track mode to track index (Prompting after)
+
 ### REQUIREMENTS
 Run this command after `git clone` to fetch RandomX library
 ```
