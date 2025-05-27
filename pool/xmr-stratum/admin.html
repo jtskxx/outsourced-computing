@@ -1,0 +1,1370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QUBIC <--> XMR Proxy Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #0099ff;
+      --primary-glow: #00bbff;
+      --secondary: #6e09e8;
+      --accent: #00ffb3;
+      --dark: #0a1222;
+      --darker: #060d19;
+      --card-bg: rgba(16, 24, 45, 0.7);
+      --success: #00e676;
+      --warning: #ffab00;
+      --error: #ff1744;
+      --text-primary: #ffffff;
+      --text-secondary: #b3e5fc;
+      --border-radius: 8px;
+      --grid-gap: 16px;
+      --card-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+      --glow-shadow: 0 0 10px var(--primary-glow);
+    }
+
+    * {
+      box-sizing: border-box;
+      transition: all 0.2s ease;
+    }
+
+    body {
+      font-family: 'Roboto', sans-serif;
+      line-height: 1.6;
+      color: var(--text-primary);
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      background: linear-gradient(135deg, var(--dark), var(--darker));
+      background-attachment: fixed;
+      min-height: 100vh;
+    }
+
+    h1, h2, h3 {
+      font-family: 'Orbitron', sans-serif;
+      letter-spacing: 1px;
+      margin-top: 0;
+    }
+
+    h1 {
+      text-align: center;
+      color: var(--accent);
+      text-shadow: 0 0 10px rgba(0, 255, 179, 0.5);
+      margin-bottom: 30px;
+      font-size: 2.5rem;
+      position: relative;
+    }
+
+    h1::after {
+      content: '';
+      display: block;
+      width: 100px;
+      height: 3px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      margin: 10px auto 0;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: var(--border-radius);
+      padding: 25px;
+      box-shadow: var(--card-shadow);
+      margin-bottom: 25px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: bold;
+      color: var(--text-secondary);
+    }
+
+    input[type="number"], input[type="text"], textarea, select {
+      width: 100%;
+      padding: 12px;
+      margin-bottom: 15px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: var(--border-radius);
+      font-size: 16px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-primary);
+      outline: none;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(0, 153, 255, 0.3);
+    }
+
+    button {
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      color: white;
+      border: none;
+      padding: 12px 18px;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 16px;
+      margin-right: 10px;
+      margin-bottom: 10px;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+      position: relative;
+      z-index: 1;
+      overflow: hidden;
+    }
+
+    button::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+      transition: 0.5s;
+      z-index: -1;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    }
+
+    button:hover::before {
+      left: 100%;
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    .save-btn {
+      background: linear-gradient(135deg, var(--success), #08ad9e);
+    }
+
+    .info {
+      background-color: rgba(0, 153, 255, 0.1);
+      padding: 15px;
+      border-left: 4px solid var(--primary);
+      margin-bottom: 20px;
+      border-radius: 0 var(--border-radius) var(--border-radius) 0;
+    }
+
+    .warning {
+      background-color: rgba(255, 171, 0, 0.1);
+      padding: 15px;
+      border-left: 4px solid var(--warning);
+      margin-bottom: 20px;
+      border-radius: 0 var(--border-radius) var(--border-radius) 0;
+    }
+
+    .error {
+      background-color: rgba(255, 23, 68, 0.1);
+      padding: 15px;
+      border-left: 4px solid var(--error);
+      margin-bottom: 20px;
+      border-radius: 0 var(--border-radius) var(--border-radius) 0;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--grid-gap);
+    }
+
+    .stat-box {
+      background: rgba(255, 255, 255, 0.05);
+      padding: 20px;
+      border-radius: var(--border-radius);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stat-box::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--primary), transparent);
+    }
+
+    .stat-value {
+      font-size: 28px;
+      font-weight: bold;
+      color: var(--primary);
+      font-family: 'Orbitron', sans-serif;
+      margin-bottom: 5px;
+    }
+
+    .stat-label {
+      color: var(--text-secondary);
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .computor-item {
+      display: flex;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 15px;
+      border-radius: var(--border-radius);
+      margin-bottom: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .computor-index {
+      width: 80px;
+      font-weight: bold;
+      color: var(--accent);
+    }
+
+    .computor-action {
+      margin-left: 10px;
+    }
+    
+    .computor-identity {
+      flex-grow: 1;
+      font-family: monospace;
+      word-break: break-all;
+      font-size: 14px;
+      color: var(--text-secondary);
+      background: rgba(0, 0, 0, 0.2);
+      padding: 5px 10px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      margin: 0 10px;
+    }
+
+    .computor-list {
+      max-height: 400px;
+      overflow-y: auto;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: var(--border-radius);
+      padding: 15px;
+      margin-top: 15px;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .tab {
+      display: flex;
+      margin-bottom: 25px;
+      border-radius: var(--border-radius);
+      overflow: hidden;
+      background: rgba(0, 0, 0, 0.3);
+      position: relative;
+    }
+
+    .tab::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, rgba(0, 153, 255, 0.2), rgba(110, 9, 232, 0.2));
+      opacity: 0.2;
+      z-index: -1;
+    }
+
+    .tab button {
+      flex: 1;
+      background: transparent;
+      color: var(--text-secondary);
+      float: none;
+      border: none;
+      outline: none;
+      cursor: pointer;
+      padding: 18px 20px;
+      transition: 0.3s;
+      font-size: 16px;
+      border-radius: 0;
+      margin: 0;
+      position: relative;
+      overflow: hidden;
+      z-index: 1;
+      font-family: 'Orbitron', sans-serif;
+      letter-spacing: 1px;
+    }
+
+    .tab button::before {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 3px;
+      background: var(--primary);
+      transform: scaleX(0);
+      transform-origin: right;
+      transition: transform 0.3s ease;
+    }
+
+    .tab button:hover {
+      background-color: rgba(0, 153, 255, 0.1);
+      transform: none;
+      box-shadow: none;
+    }
+
+    .tab button:hover::before {
+      transform: scaleX(0.5);
+      transform-origin: left;
+    }
+
+    .tab button.active {
+      background: linear-gradient(to bottom, rgba(0, 153, 255, 0.3), rgba(0, 0, 0, 0));
+      color: var(--primary);
+      font-weight: bold;
+      box-shadow: inset 0 0 10px rgba(0, 153, 255, 0.1);
+    }
+
+    .tab button.active::before {
+      transform: scaleX(1);
+    }
+
+    .tabcontent {
+      display: none;
+      padding: 0;
+      animation: fadeIn 0.5s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(0, 153, 255, 0.4); }
+      70% { box-shadow: 0 0 0 10px rgba(0, 153, 255, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(0, 153, 255, 0); }
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 30px;
+      padding: 20px;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    .footer a {
+      color: var(--primary);
+      text-decoration: none;
+      position: relative;
+    }
+
+    .footer a::after {
+      content: '';
+      position: absolute;
+      width: 100%;
+      height: 1px;
+      bottom: -2px;
+      left: 0;
+      background: linear-gradient(90deg, transparent, var(--primary), transparent);
+      transform: scaleX(0);
+      transform-origin: center;
+      transition: transform 0.3s ease;
+    }
+
+    .footer a:hover::after {
+      transform: scaleX(1);
+    }
+
+    /* PROGRESS BAR STYLES */
+    .progress-container {
+      margin-top: 10px;
+      width: 100%;
+    }
+
+    .progress-bar {
+      height: 10px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary), var(--accent));
+      border-radius: 5px;
+      transition: width 0.5s ease;
+    }
+
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 5px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    /* GRID LAYOUT FOR DATA VIEW */
+    .computor-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: var(--grid-gap);
+      margin-top: 20px;
+    }
+
+    .computor-box {
+      background: rgba(255, 255, 255, 0.05);
+      padding: 15px;
+      border-radius: var(--border-radius);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .section-title {
+      font-weight: bold;
+      color: var(--accent);
+      margin-bottom: 8px;
+      font-family: 'Orbitron', sans-serif;
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--primary);
+      border-radius: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--primary-glow);
+    }
+    
+    /* Table styles */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 15px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: var(--border-radius);
+      overflow: hidden;
+    }
+    
+    th, td {
+      padding: 12px 15px;
+      text-align: left;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    th {
+      background: rgba(0, 0, 0, 0.3);
+      color: var(--accent);
+      font-weight: bold;
+    }
+    
+    tr:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+    
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+      .stats {
+        grid-template-columns: 1fr;
+      }
+      
+      .tab button {
+        padding: 12px 10px;
+        font-size: 14px;
+      }
+      
+      .computor-item {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      
+      .computor-identity {
+        width: 100%;
+        margin: 10px 0;
+      }
+      
+      .computor-action {
+        width: 100%;
+        margin-left: 0;
+      }
+
+      .computor-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>QUBIC <--> XMR Proxy Settings</h1>
+  
+  <div class="tab" id="mainTabs">
+    <button class="tablinks" id="ComputorTabBtn" onclick="openTab(event, 'ComputorTab')">Computor Management</button>
+    <button class="tablinks" id="StatsTabBtn" onclick="openTab(event, 'StatsTab')">Mining Stats</button>
+    <button class="tablinks" id="PerformanceTabBtn" onclick="openTab(event, 'PerformanceTab')">Performance</button>
+    <button class="tablinks" id="APITabBtn" onclick="openTab(event, 'APITab')">Computor API</button>
+  </div>
+  
+  <div id="ComputorTab" class="tabcontent">
+    <div class="info">
+      Manage multiple computor indices for mining. The proxy will randomly assign miners to configured computors for even distribution.
+    </div>
+    
+    <div class="card">
+      <h2>Computor Distribution</h2>
+      <div class="info">
+        Computors are balanced using random selection. Each new miner is randomly assigned to one of the configured computors.
+      </div>
+      <div id="computorDistribution"></div>
+      
+      <h3>Add New Computor</h3>
+      <div style="margin-bottom: 15px;">
+        <label for="newComputorIndex">Index (0-675):</label>
+        <input type="number" id="newComputorIndex" min="0" max="675">
+      </div>
+      <button onclick="addComputor()">Add Computor</button>
+      <div id="computorResult"></div>
+    </div>
+    
+    <div class="card">
+      <h2>Mining Selection</h2>
+      <div class="info">
+        Select which computors to actively mine. If none are selected, all configured computors will be used.
+      </div>
+      <div style="margin-bottom: 15px;">
+        <button onclick="selectAllComputors()" class="save-btn">Enable All</button>
+        <button onclick="deselectAllComputors()">Disable All</button>
+        <button onclick="saveComputorSelection()" class="save-btn" style="float: right;">Save Selection</button>
+      </div>
+      <div id="computorSelection" style="max-height: 300px; overflow-y: auto; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: var(--border-radius); padding: 15px; background: rgba(0, 0, 0, 0.2);">
+        <!-- Filled dynamically -->
+      </div>
+    </div>
+    
+    <div class="card">
+      <h2>Batch Add by Identity</h2>
+      <div class="info">
+        Paste Qubic identity strings, one per line. Each identity will be converted to its index number.
+      </div>
+      <textarea id="identityBatch" rows="5" placeholder="Paste Qubic identity strings here, one per line..."></textarea>
+      <button onclick="addIdentityBatch()" style="margin-top: 15px;">Add Identities</button>
+      <div id="batchResult"></div>
+    </div>
+  </div>
+  
+  <div id="StatsTab" class="tabcontent">
+    <div class="card">
+      <h2>Mining Statistics</h2>
+      <div class="stats">
+        <div class="stat-box">
+          <div class="stat-value" id="distributedShares">-</div>
+          <div class="stat-label">Distributed Shares</div>
+          <div style="font-size: 12px; color: var(--text-secondary); margin-top: 5px;">Shares sent to pool</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="acceptedShares">-</div>
+          <div class="stat-label">Accepted Shares</div>
+          <div style="font-size: 12px; color: var(--text-secondary); margin-top: 5px;">All valid shares</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="activeMiners">-</div>
+          <div class="stat-label">Active Miners</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="totalHashrate">-</div>
+          <div class="stat-label">Total Hashrate</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="uptime">-</div>
+          <div class="stat-label">Uptime</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Task Processing</h2>
+      <div class="stats">
+        <div class="stat-box">
+          <div class="stat-value" id="tasksMined">-</div>
+          <div class="stat-label">Tasks Mined</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="tasksSkipped">-</div>
+          <div class="stat-label">Tasks Skipped</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="totalTasks">-</div>
+          <div class="stat-label">Total Tasks Processed</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="avgProcessingTime">-</div>
+          <div class="stat-label">Avg. Processing Time</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Share Tracking Details</h2>
+      <div class="stats">
+        <div class="stat-box">
+          <div class="stat-value" id="duplicateSharesStats">-</div>
+          <div class="stat-label">Duplicate Shares</div>
+          <div style="font-size: 12px; color: var(--text-secondary); margin-top: 5px;">Distributed for accuracy</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="missingJobShares">-</div>
+          <div class="stat-label">Missing Job Info</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="jobCacheSize">-</div>
+          <div class="stat-label">Job Cache Size</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="shareEfficiency">-</div>
+          <div class="stat-label">Share Efficiency</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div id="PerformanceTab" class="tabcontent">
+    <div class="card">
+      <h2>Load Distribution</h2>
+      <div class="info">
+        Using random selection for even distribution. Miners are randomly assigned to enabled computors.
+      </div>
+      <div style="margin-bottom: 15px; display: flex; justify-content: flex-end;">
+        <button onclick="triggerRebalance()" class="save-btn">Reassign Miners</button>
+      </div>
+      <div class="stats">
+        <div class="stat-box">
+          <div class="stat-value" id="computorCount">-</div>
+          <div class="stat-label">Active Computors</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="loadVariance">-</div>
+          <div class="stat-label">Load Variance</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="rebalanceInterval">-</div>
+          <div class="stat-label">Reassignment Interval</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="lastRebalanced">-</div>
+          <div class="stat-label">Last Reassignment</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Share Metrics</h2>
+      <div class="stats">
+        <div class="stat-box">
+          <div class="stat-value" id="acceptedSharesPerf">-</div>
+          <div class="stat-label">Accepted Shares</div>
+          <div style="font-size: 12px; color: var(--text-secondary); margin-top: 5px;">Non-duplicate shares</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="duplicateShares">-</div>
+          <div class="stat-label">Duplicate Shares</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="acceptRate">-</div>
+          <div class="stat-label">Acceptance Rate</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value" id="totalSubmitted">-</div>
+          <div class="stat-label">Total Submitted</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Computor Assignment Stats</h2>
+      <div class="info">
+        Shows the number of miners assigned to each computor index.
+      </div>
+      <div id="topComputors" style="max-height: 400px; overflow-y: auto; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: var(--border-radius);">
+        <table id="computorsTable">
+          <thead>
+            <tr>
+              <th>Index</th>
+              <th>Miners</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Filled dynamically -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  
+  <div id="APITab" class="tabcontent">
+    <div class="card">
+      <h2>Computor API</h2>
+      <div class="info">
+        Fetch the computor list from the Qubic API for a specific epoch. This will update the available identities.
+      </div>
+      
+      <div style="display: flex; gap: 15px; align-items: flex-end; margin-bottom: 15px;">
+        <div style="flex: 1;">
+          <label for="epochNumber">Epoch Number:</label>
+          <input type="number" id="epochNumber" min="1" value="CURRENT_EPOCH">
+        </div>
+        <button onclick="fetchComputorList()">Get Computor List</button>
+      </div>
+      
+      <div id="apiResult"></div>
+      
+      <h3>Computor List</h3>
+      <div class="info">Current Epoch: <span id="currentEpoch">CURRENT_EPOCH</span></div>
+      <div id="computorList" class="computor-list">
+        <div id="computorListContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <a href="https://github.com/jtskxx/Jetski-Qubic-Pool" target="_blank">jetskipool.ai</a>
+  </div>
+  
+  <script>
+    // Tab functionality with persistence
+    function openTab(evt, tabName) {
+      var i, tabcontent, tablinks;
+      tabcontent = document.getElementsByClassName("tabcontent");
+      for (i = 0; i < tabcontent.length; i++) {
+        tabcontent[i].style.display = "none";
+      }
+      tablinks = document.getElementsByClassName("tablinks");
+      for (i = 0; i < tablinks.length; i++) {
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+      }
+      document.getElementById(tabName).style.display = "block";
+      if (evt) { // Check if event exists (for initial load)
+        evt.currentTarget.className += " active";
+      } else {
+        // Find the correct button and activate it
+        document.getElementById(tabName + "Btn").className += " active";
+      }
+      
+      // Save active tab to localStorage
+      localStorage.setItem("activeTab", tabName);
+      
+      // Refresh data when tab is opened
+      if (tabName === 'StatsTab') {
+        loadStats();
+      } else if (tabName === 'ComputorTab') {
+        loadComputorDistribution();
+      } else if (tabName === 'APITab') {
+        loadComputorList();
+      } else if (tabName === 'PerformanceTab') {
+        loadPerformanceMetrics();
+      }
+    }
+    
+    // Format time duration (seconds to days, hours, minutes, seconds)
+    function formatDuration(seconds) {
+      const days = Math.floor(seconds / 86400);
+      seconds %= 86400;
+      const hours = Math.floor(seconds / 3600);
+      seconds %= 3600;
+      const minutes = Math.floor(seconds / 60);
+      seconds = Math.floor(seconds % 60);
+      
+      const parts = [];
+      if (days > 0) parts.push(days + 'd');
+      if (hours > 0) parts.push(hours + 'h');
+      if (minutes > 0) parts.push(minutes + 'm');
+      if (seconds > 0 || parts.length === 0) parts.push(seconds + 's');
+      
+      return parts.join(' ');
+    }
+    
+    // Format time ago
+    function formatTimeAgo(dateString) {
+      if (!dateString) return 'never';
+      
+      const date = new Date(dateString);
+      const now = new Date();
+      const diffSeconds = Math.floor((now - date) / 1000);
+      
+      if (diffSeconds < 60) return `${diffSeconds}s ago`;
+      if (diffSeconds < 3600) return `${Math.floor(diffSeconds / 60)}m ago`;
+      if (diffSeconds < 86400) return `${Math.floor(diffSeconds / 3600)}h ago`;
+      return `${Math.floor(diffSeconds / 86400)}d ago`;
+    }
+    
+    // Load mining statistics with animation
+    function loadStats() {
+      fetch('/stats')
+        .then(response => response.json())
+        .then(data => {
+          // Update basic stats
+          animateValue("distributedShares", 0, data.totalShares || 0, 1000);
+          animateValue("acceptedShares", 0, data.acceptedShares || 0, 1000);
+          animateValue("activeMiners", 0, data.minerCount.active, 1000);
+          document.getElementById('totalHashrate').textContent = data.totalHashrateFormatted;
+          document.getElementById('uptime').textContent = formatDuration(data.uptime);
+          
+          // Update task statistics
+          if (data.taskStats) {
+            animateValue("tasksMined", 0, data.taskStats.mined, 1000);
+            animateValue("tasksSkipped", 0, data.taskStats.skipped, 1000);
+            animateValue("totalTasks", 0, data.taskStats.processed, 1000);
+            
+            // Processing time formatting
+            if (data.taskStats.avgProcessingTime) {
+              document.getElementById('avgProcessingTime').textContent = `${data.taskStats.avgProcessingTime.toFixed(2)}ms`;
+            }
+          }
+          
+          // Update share tracking details
+          if (data.shareTracking) {
+            document.getElementById('missingJobShares').textContent = data.shareTracking.missingJobShares || 0;
+            
+            // Calculate efficiency (distributed shares / all valid shares including duplicates)
+            const totalValidShares = (data.acceptedShares || 0);
+            const efficiency = totalValidShares > 0 
+              ? ((data.totalShares / totalValidShares) * 100).toFixed(1) 
+              : '100.0';
+            document.getElementById('shareEfficiency').textContent = `${efficiency}%`;
+          }
+          
+          // Update duplicate shares in stats tab
+          if (data.shareMetrics) {
+            document.getElementById('duplicateSharesStats').textContent = data.shareMetrics.duplicates || 0;
+          }
+          
+          // Update job cache info
+          if (data.jobCacheStats) {
+            document.getElementById('jobCacheSize').textContent = `${data.jobCacheStats.cacheSize}/${data.jobCacheStats.maxCacheSize}`;
+          }
+          
+          // Pulse animation for updated stats
+          const statBoxes = document.querySelectorAll('.stat-box');
+          statBoxes.forEach(box => {
+            box.style.animation = 'pulse 1.5s';
+            setTimeout(() => {
+              box.style.animation = '';
+            }, 1500);
+          });
+        })
+        .catch(error => {
+          console.error('Error loading stats:', error);
+        });
+    }
+    
+    // Load performance metrics
+    function loadPerformanceMetrics() {
+      fetch('/performance')
+        .then(response => response.json())
+        .then(data => {
+          console.log('Performance data:', data); // Debug log
+          
+          // Update load balancing metrics
+          if (data.computorLoad) {
+            document.getElementById('computorCount').textContent = data.computorLoad.totalComputors || 0;
+            
+            // Calculate variance if not provided
+            let variance = 0;
+            if (data.computorLoad.topComputors && data.computorLoad.topComputors.length > 1) {
+              const shares = data.computorLoad.topComputors.map(c => c.shares);
+              const mean = shares.reduce((a, b) => a + b, 0) / shares.length;
+              variance = shares.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / shares.length;
+            }
+            document.getElementById('loadVariance').textContent = variance.toFixed(4);
+            
+            // Update top computors table
+            const topComputors = data.computorLoad.topComputors || [];
+            console.log('Top computors:', topComputors); // Debug log
+            
+            const tableBody = document.querySelector('#computorsTable tbody');
+            if (tableBody) {
+              tableBody.innerHTML = '';
+              
+              if (topComputors.length > 0) {
+                topComputors.forEach(comp => {
+                  const row = document.createElement('tr');
+                  row.innerHTML = `
+                    <td>${comp.computorIndex}</td>
+                    <td>${comp.assignedMiners || 0}</td>
+                  `;
+                  tableBody.appendChild(row);
+                });
+              } else {
+                const row = document.createElement('tr');
+                row.innerHTML = '<td colspan="2" style="text-align: center;">No computors active</td>';
+                tableBody.appendChild(row);
+              }
+            } else {
+              console.error('Table body not found!');
+            }
+          } else {
+            console.log('No computorLoad data in response');
+            // Still try to show empty table
+            const tableBody = document.querySelector('#computorsTable tbody');
+            if (tableBody) {
+              tableBody.innerHTML = '<tr><td colspan="2" style="text-align: center;">No computor data available. Please configure computors first.</td></tr>';
+            }
+          }
+          
+          // Update share metrics
+          if (data.shareMetrics) {
+            document.getElementById('acceptedSharesPerf').textContent = data.shareMetrics.accepted || 0;
+            document.getElementById('duplicateShares').textContent = data.shareMetrics.duplicates || 0;
+            document.getElementById('acceptRate').textContent = `${data.shareMetrics.acceptRate || 0}%`;
+            document.getElementById('totalSubmitted').textContent = data.shareMetrics.totalSubmitted || 0;
+          }
+          
+          // Update reassignment info
+          document.getElementById('rebalanceInterval').textContent = formatDuration(data.taskMetrics?.rebalanceInterval / 1000 || 1800);
+          document.getElementById('lastRebalanced').textContent = formatTimeAgo(data.taskMetrics?.lastRebalanced);
+          
+          // Pulse animation for updated stats
+          const statBoxes = document.querySelectorAll('.stat-box');
+          statBoxes.forEach(box => {
+            box.style.animation = 'pulse 1.5s';
+            setTimeout(() => {
+              box.style.animation = '';
+            }, 1500);
+          });
+        })
+        .catch(error => {
+          console.error('Error loading performance metrics:', error);
+        });
+    }
+    
+    // Trigger manual reassignment
+    function triggerRebalance() {
+      fetch('/trigger-rebalance', {
+        method: 'POST'
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showNotification('success', data.message);
+          // Reload performance metrics after a short delay
+          setTimeout(loadPerformanceMetrics, 1000);
+        } else {
+          showNotification('error', data.message || 'Failed to reassign miners');
+        }
+      })
+      .catch(error => {
+        showNotification('error', 'Error: ' + error.message);
+      });
+    }
+    
+    // Animate value counting up
+    function animateValue(id, start, end, duration) {
+      const element = document.getElementById(id);
+      if (!element) return;
+      
+      let startTimestamp = null;
+      const step = (timestamp) => {
+        if (!startTimestamp) startTimestamp = timestamp;
+        const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+        const value = Math.floor(progress * (end - start) + start);
+        element.textContent = value.toLocaleString();
+        if (progress < 1) {
+          window.requestAnimationFrame(step);
+        }
+      };
+      window.requestAnimationFrame(step);
+    }
+    
+    // Load computor distribution with simplified weight editor
+    function loadComputorDistribution() {
+      fetch('/stats')
+        .then(response => response.json())
+        .then(data => {
+          const distributionDiv = document.getElementById('computorDistribution');
+          const selectionDiv = document.getElementById('computorSelection');
+          
+          if (data.computorDistribution && data.computorDistribution.length > 0) {
+            let html = '';
+            let selectionHtml = '';
+            
+            // Get enabled computors from the server
+            fetch('/enabled-computors')
+              .then(response => response.json())
+              .then(enabledData => {
+                const enabledComputors = new Set(enabledData.enabledComputors || []);
+                const allEnabled = enabledComputors.size === 0; // If empty, all are enabled
+                
+                data.computorDistribution.forEach((item, i) => {
+                  html += `
+                    <div class="computor-item" id="computor-${i}">
+                      <div class="computor-index">Index: ${item.index}</div>
+                      <div class="computor-identity">${item.identity || 'Unknown Identity'}</div>
+                      <div class="computor-action">
+                        <button onclick="removeComputor(${i})">Remove</button>
+                      </div>
+                    </div>
+                  `;
+                  
+                  // Add to selection list
+                  const isEnabled = allEnabled || enabledComputors.has(item.index);
+                  selectionHtml += `
+                    <div style="margin-bottom: 10px; display: flex; align-items: center;">
+                      <input type="checkbox" id="select-computor-${item.index}" value="${item.index}" ${isEnabled ? 'checked' : ''} style="margin-right: 10px;">
+                      <label for="select-computor-${item.index}" style="flex-grow: 1; margin: 0; cursor: pointer; display: flex; align-items: center;">
+                        <span style="font-weight: bold; min-width: 80px; color: var(--accent);">Index ${item.index}</span>
+                        <span style="font-family: monospace; margin-left: 15px; font-size: 12px; color: var(--text-secondary);">${item.identity ? item.identity.substring(0, 20) + '...' : ''}</span>
+                      </label>
+                    </div>
+                  `;
+                });
+                
+                distributionDiv.innerHTML = html;
+                selectionDiv.innerHTML = selectionHtml;
+              })
+              .catch(error => {
+                console.error('Error loading enabled computors:', error);
+                // Still show the distribution even if we can't load enabled status
+                distributionDiv.innerHTML = html;
+              });
+          } else {
+            distributionDiv.innerHTML = '<div class="info">No computor distribution configured</div>';
+            selectionDiv.innerHTML = '<div class="info">No computors available for selection</div>';
+          }
+        })
+        .catch(error => {
+          console.error('Error loading computor distribution:', error);
+        });
+    }
+    
+    // Show notification instead of alert
+    function showNotification(type, message) {
+      const notifId = 'notification-' + Math.random().toString(36).substr(2, 9);
+      const notif = document.createElement('div');
+      notif.id = notifId;
+      notif.className = type === 'success' ? 'info' : 'error';
+      notif.innerHTML = message;
+      notif.style.position = 'fixed';
+      notif.style.bottom = '20px';
+      notif.style.right = '20px';
+      notif.style.maxWidth = '300px';
+      notif.style.zIndex = '1000';
+      notif.style.opacity = '0';
+      notif.style.transform = 'translateY(20px)';
+      notif.style.transition = 'opacity 0.3s, transform 0.3s';
+      
+      document.body.appendChild(notif);
+      
+      // Fade in
+      setTimeout(() => {
+        notif.style.opacity = '1';
+        notif.style.transform = 'translateY(0)';
+      }, 10);
+      
+      // Fade out and remove
+      setTimeout(() => {
+        notif.style.opacity = '0';
+        notif.style.transform = 'translateY(20px)';
+        setTimeout(() => {
+          if (document.getElementById(notifId)) {
+            document.body.removeChild(notif);
+          }
+        }, 300);
+      }, 3000);
+    }
+    
+    // Load computor list
+    function loadComputorList() {
+      fetch('/stats')
+        .then(response => response.json())
+        .then(data => {
+          document.getElementById('currentEpoch').textContent = data.currentEpoch || 'Unknown';
+          
+          fetch('/computor-list')
+            .then(response => response.json())
+            .then(listData => {
+              const listDiv = document.getElementById('computorListContent');
+              
+              if (listData && listData.length > 0) {
+                let html = '';
+                listData.forEach((identity, index) => {
+                  html += `
+                    <div style="margin-bottom: 10px; display: flex; align-items: center;">
+                      <span style="font-weight: bold; min-width: 60px; color: var(--accent);">${index}:</span>
+                      <span style="font-family: monospace; word-break: break-all; flex-grow: 1; background: rgba(0, 0, 0, 0.2); padding: 5px 10px; border-radius: 4px; color: var(--text-secondary);">${identity}</span>
+                      <button onclick="addIdentityFromList(${index}, '${identity}')" style="margin-left: 10px;">Add</button>
+                    </div>
+                  `;
+                });
+                
+                listDiv.innerHTML = html;
+              } else {
+                listDiv.innerHTML = '<div class="info">No computor list available. Use "Get Computor List" to fetch the list.</div>';
+              }
+            })
+            .catch(error => {
+              console.error('Error loading computor list:', error);
+              document.getElementById('computorListContent').innerHTML = 
+                '<div class="error">Error loading computor list. Use "Get Computor List" to fetch the list.</div>';
+            });
+        })
+        .catch(error => {
+          console.error('Error loading stats:', error);
+        });
+    }
+    
+    // Add computor
+    function addComputor() {
+      const index = parseInt(document.getElementById('newComputorIndex').value);
+      
+      if (isNaN(index) || index < 0 || index > 675) {
+        document.getElementById('computorResult').innerHTML = 
+          '<div class="error">Invalid computor index! Must be between 0 and 675.</div>';
+        return;
+      }
+      
+      // Use default weight of 1 (not used for load balancing anymore)
+      const weight = 1;
+      
+      fetch('/add-computor', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index, weight }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('computorResult').innerHTML = 
+            `<div class="info">${data.message}</div>`;
+          
+          // Clear inputs
+          document.getElementById('newComputorIndex').value = '';
+          
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          document.getElementById('computorResult').innerHTML = 
+            `<div class="error">${data.message}</div>`;
+        }
+      })
+      .catch(error => {
+        document.getElementById('computorResult').innerHTML = 
+          `<div class="error">Error: ${error.message}</div>`;
+      });
+    }
+    
+    // Remove computor
+    function removeComputor(index) {
+      fetch('/remove-computor', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          // Reload distribution
+          loadComputorDistribution();
+          showNotification('success', 'Computor removed successfully');
+        } else {
+          showNotification('error', 'Error removing computor: ' + data.message);
+        }
+      })
+      .catch(error => {
+        showNotification('error', 'Error: ' + error.message);
+      });
+    }
+    
+    // Add identity from list
+    function addIdentityFromList(index, identity) {
+      const weight = 1; // Default weight (not used for load balancing)
+      
+      fetch('/add-computor', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ index, weight, identity }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showNotification('success', "Added computor " + index);
+          
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          showNotification('error', "Error adding computor: " + data.message);
+        }
+      })
+      .catch(error => {
+        showNotification('error', "Error: " + error.message);
+      });
+    }
+    
+    // Add identity batch
+    function addIdentityBatch() {
+      const identities = document.getElementById('identityBatch').value.trim().split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
+      
+      const weight = 1; // Default weight (not used for load balancing)
+      
+      if (identities.length === 0) {
+        document.getElementById('batchResult').innerHTML = 
+          '<div class="error">Please enter at least one identity.</div>';
+        return;
+      }
+      
+      fetch('/add-identity-batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ identities, weight }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('batchResult').innerHTML = 
+            `<div class="info">${data.message}</div>`;
+          
+          // Clear textarea
+          document.getElementById('identityBatch').value = '';
+          
+          // Reload distribution
+          loadComputorDistribution();
+        } else {
+          document.getElementById('batchResult').innerHTML = 
+            `<div class="error">${data.message}</div>`;
+        }
+      })
+      .catch(error => {
+        document.getElementById('batchResult').innerHTML = 
+          `<div class="error">Error: ${error.message}</div>`;
+      });
+    }
+    
+    // Fetch computor list
+    function fetchComputorList() {
+      const epoch = parseInt(document.getElementById('epochNumber').value);
+      
+      if (isNaN(epoch) || epoch < 1) {
+        document.getElementById('apiResult').innerHTML = 
+          '<div class="error">Invalid epoch number!</div>';
+        return;
+      }
+      
+      document.getElementById('apiResult').innerHTML = 
+        '<div class="info">Fetching computor list for epoch ' + epoch + '...</div>';
+      
+      fetch('/fetch-computor-list', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ epoch }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('apiResult').innerHTML = 
+            `<div class="info">${data.message}</div>`;
+          
+          // Update current epoch display
+          document.getElementById('currentEpoch').textContent = epoch;
+          
+          // Reload computor list
+          loadComputorList();
+        } else {
+          document.getElementById('apiResult').innerHTML = 
+            `<div class="error">${data.message}</div>`;
+        }
+      })
+      .catch(error => {
+        document.getElementById('apiResult').innerHTML = 
+          `<div class="error">Error: ${error.message}</div>`;
+      });
+    }
+    
+    // Check for active tab and set it on page load
+    document.addEventListener('DOMContentLoaded', function() {
+      // Try to get active tab from localStorage
+      const activeTab = localStorage.getItem("activeTab");
+      
+      if (activeTab) {
+        // Open the saved tab without an event
+        openTab(null, activeTab);
+      } else {
+        // Default to first tab
+        document.getElementById("ComputorTabBtn").click();
+      }
+      
+      // Load initial data
+      loadStats();
+      loadComputorDistribution();
+      loadPerformanceMetrics();
+    });
+    
+    // Select all computors
+    function selectAllComputors() {
+      const checkboxes = document.querySelectorAll('#computorSelection input[type="checkbox"]');
+      checkboxes.forEach(cb => cb.checked = true);
+    }
+    
+    // Deselect all computors
+    function deselectAllComputors() {
+      const checkboxes = document.querySelectorAll('#computorSelection input[type="checkbox"]');
+      checkboxes.forEach(cb => cb.checked = false);
+    }
+    
+    // Save computor selection
+    function saveComputorSelection() {
+      const checkboxes = document.querySelectorAll('#computorSelection input[type="checkbox"]:checked');
+      const enabledComputors = Array.from(checkboxes).map(cb => parseInt(cb.value));
+      
+      fetch('/set-enabled-computors', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ enabledComputors }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showNotification('success', data.message);
+        } else {
+          showNotification('error', data.message || 'Failed to save selection');
+        }
+      })
+      .catch(error => {
+        showNotification('error', 'Error: ' + error.message);
+      });
+    }
+    
+    // Refresh data periodically
+    setInterval(loadStats, 10000);
+    setInterval(loadPerformanceMetrics, 15000);
+  </script>
+</body>
+</html>

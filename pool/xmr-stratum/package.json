@@ -1,0 +1,25 @@
+{
+  "name": "stratum-proxy",
+  "version": "3.0.0",
+  "description": "Refactored QUBIC <--> XMR Stratum Proxy with improved maintainability",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "keywords": [
+    "stratum",
+    "proxy",
+    "qubic",
+    "xmr",
+    "mining"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "pg": "^8.11.3"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
