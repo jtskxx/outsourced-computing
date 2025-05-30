@@ -112,5 +112,5 @@ module.exports = {
 
 // Nonce calc constants
 module.exports.DOMAIN_SIZE = 25414007;
-module.exports.MINER_NONCE_RANGE_SIZE = 500000; // 500k Nonce range (TESTING) - 250k Recommended 
-module.exports.MAX_MINERS_PER_COMPUTOR = 50; // Not enforced yet ! - 101 Recommended if using 250k range
+module.exports.MINER_NONCE_RANGE_SIZE = 250000; // 250k  
+module.exports.MAX_MINERS_PER_COMPUTOR = 101; // Not enforced yet ! 
